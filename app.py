@@ -398,12 +398,15 @@ def verificar_i_obtenir_uris(sp, cançons):
 
 # --- 11. EXECUTOR PRINCIPAL ---
 
-# 🔴 SOLUCIÓ BUG 1: Inicialitzem les variables a l'inici perquè sempre existeixin a la memòria
+# 🔴 SOLUCIÓ BUG 1: Inicialitzem les variables a l'inici de tot el procés principal
 if 'cancons_reals' not in st.session_state:
     st.session_state.cancons_reals = []
+if 'uris_spotify' not in st.session_state:
     st.session_state.uris_spotify = []
+if 'text_copiar' not in st.session_state:
     st.session_state.text_copiar = ""
-    st.session_state.titol_playlist = "Nova Playlist Spotify"
+if 'titol_playlist' not in st.session_state:
+    st.session_state.titol_playlist = "Nova Playlist Mákina"
 
 if CLIENT_ID and CLIENT_SECRET:
     try:
@@ -431,20 +434,34 @@ if CLIENT_ID and CLIENT_SECRET:
             ], index=0)
             any_triat = st.text_input("Any / Rang (Ex: 1999, 2025/2026):", "2025/2026")
             
-            tipus_referencia = st.radio("Tipus de referència:", ["Cançó", "Artista"], horizontal=True)
+            tipus_referencia = st.radio(
+                "Tipus de referència:",
+                ["Cançó", "Artista"],
+                horizontal=True
+            )
             
             if "Cançó" in tipus_referencia:
-                llavor_input = st.text_input("Introdueix una CANÇÓ de referència:", placeholder="Ex: Pont Aeri - Flying Free")
+                llavor_input = st.text_input(
+                    "Introdueix una CANÇÓ de referència:",
+                    placeholder="Ex: Pont Aeri - Flying Free"
+                )
             else:
-                llavor_input = st.text_input("Introdueix un ARTISTA de referència:", placeholder="Ex: Pont Aeri")
+                llavor_input = st.text_input(
+                    "Introdueix un ARTISTA de referència:",
+                    placeholder="Ex: Pont Aeri"
+                )
             
             quantitat = st.number_input("Nombre de cançons:", min_value=10, max_value=200, value=100, step=10)
 
             st.subheader("Fonts de cerca")
             usar_spotify = st.checkbox("API de Spotify", value=True)
             usar_discogs = st.checkbox("API de Discogs", value=True)
+            usar_musicbrainz = st.checkbox("MusicBrainz", value=True)
+            usar_deezer = st.checkbox("Deezer (gratuïta)", value=False)
+            usar_beatport = st.checkbox("Beatport (raspat)", value=False)
             
             st.subheader("Opcions avançades")
+            any_estricte = st.checkbox("Any estricte (sentit clàssics)", value=True)
             validar_genere = st.checkbox("Validar gènere a Spotify (recomanat)", value=True)
 
             if st.button("Començar Rastreig de Novetats"):
@@ -480,7 +497,7 @@ if CLIENT_ID and CLIENT_SECRET:
                             if es_valid:
                                 artistes_validats.append(artista)
                         
-                        log(f"{len(artistes_validats)} artistes validats del gènere correcte", "success")
+                        log(f"{len(artistes_validats)} artistes validats del gènere correcte (de {len(artistes_reals)})", "success")
                     else:
                         artistes_validats = artistes_reals
                     
@@ -494,6 +511,7 @@ if CLIENT_ID and CLIENT_SECRET:
                             for idx, artista in enumerate(artistes_validats):
                                 cançons_artista = cercar_novetats_artista_spotify(sp, artista, any_triat, limit=10)
                                 totes_cançons.extend(cançons_artista)
+                                log(f"{artista}: {len(cançons_artista)} cançons trobades", "info")
                         
                         # FASE 4: Cercar novetats a Discogs
                         if usar_discogs:
@@ -501,18 +519,22 @@ if CLIENT_ID and CLIENT_SECRET:
                             for idx, artista in enumerate(artistes_validats):
                                 cançons_artista = cercar_novetats_artista_discogs(artista, any_triat, limit=10)
                                 totes_cançons.extend(cançons_artista)
+                                log(f"{artista}: {len(cançons_artista)} cançons trobades a Discogs", "info")
                         
                         # FASE 5: Eliminar duplicats
                         log("Eliminant duplicats...", "info")
                         cançons_úniques = eliminar_duplicats(totes_cançons)
+                        log(f"Després d'eliminar duplicats: {len(cançons_úniques)} cançons", "success")
                         
                         # FASE 6: Limitar a la quantitat demanada
                         cançons_finals = cançons_úniques[:quantitat]
+                        log(f"Total cançons reals trobades: {len(cançons_finals)}", "success")
                         
                         # FASE 7: Verificar a Spotify i obtenir URIs
                         log("Verificant a Spotify i obtenint URIs...", "info")
                         cançons_verificades = verificar_i_obtenir_uris(sp, cançons_finals)
                         
+                        # Preparar dades per mostrar
                         cancons_processades = []
                         uris_tmp = []
                         text_tmp = ""
@@ -540,36 +562,40 @@ if CLIENT_ID and CLIENT_SECRET:
             st.subheader("Consola de Depuració - Temps Real")
             render_console_permanent()
             
-            # --- ZONA DE BOTONS 1 (Dins la Consola) ---
-            if st.session_state.uris_spotify:
-                col_btn_c1, col_btn_c2 = st.columns(2)
-                with col_btn_c1:
-                    # Permetem editar el nom
-                    nom_llista_consola = st.text_input("Nom de la playlist a Spotify:", value=st.session_state.titol_playlist, key="input_consola")
-                    
-                    # 🔴 SOLUCIÓ BUG 2: Afegim un `key` únic per diferenciar els botons
-                    if st.button("Crear Playlist Automàtica a Spotify", key="btn_crear_consola"):
-                        try:
-                            log(f"Creant playlist '{nom_llista_consola}' a Spotify...", "info")
-                            pl = sp.user_playlist_create(
-                                user=usuari_sp['id'],
-                                name=nom_llista_consola,
-                                public=True
-                            )
-                            # Bucle per evitar el límit de 100 cançons per petició
-                            for i in range(0, len(st.session_state.uris_spotify), 100):
-                                sp.playlist_add_items(
-                                    playlist_id=pl['id'],
-                                    items=st.session_state.uris_spotify[i:i+100]
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                    if st.session_state.uris_spotify:
+                        # 🔴 SOLUCIÓ: Posem key="input_nom_consola" per evitar duplicats
+                        nom_llista_consola = st.text_input(
+                            "Nom de la playlist a Spotify:", 
+                            value=st.session_state.titol_playlist,
+                            key="input_nom_consola"
+                        )
+                        
+                        # 🔴 SOLUCIÓ BUG 2: Afegim key="btn_crear_consola"
+                        if st.button("Crear Playlist Automàtica a Spotify", key="btn_crear_consola"):
+                            try:
+                                log(f"Creant playlist '{nom_llista_consola}' a Spotify...", "info")
+                                pl = sp.user_playlist_create(
+                                    user=usuari_sp['id'],
+                                    name=nom_llista_consola,
+                                    public=True
                                 )
-                            log(f"Playlist creada: {pl['external_urls']['spotify']}", "success")
-                            st.success(f"Playlist '{nom_llista_consola}' creada amb èxit!")
-                            st.link_button("Obrir Playlist", pl['external_urls']['spotify'])
-                        except Exception as e:
-                            log(f"Error creant playlist: {e}", "error")
-                            st.error(f"Error creant playlist: {e}")
+                                # Spotify té un límit de 100 cançons per petició 'playlist_add_items'
+                                for i in range(0, len(st.session_state.uris_spotify), 100):
+                                    sp.playlist_add_items(
+                                        playlist_id=pl['id'],
+                                        items=st.session_state.uris_spotify[i:i+100]
+                                    )
+                                log(f"Playlist creada: {pl['external_urls']['spotify']}", "success")
+                                st.success(f"Playlist '{nom_llista_consola}' creada amb èxit!")
+                                st.link_button("Obrir Playlist", pl['external_urls']['spotify'])
+                                st.session_state.titol_playlist = nom_llista_consola
+                            except Exception as e:
+                                log(f"Error creant playlist: {e}", "error")
+                                st.error(f"Error creant playlist: {e}")
             
-            # Mostrar resultats a la taula
+            # Mostrar resultats
             if 'cancons_reals' in st.session_state and st.session_state.cancons_reals:
                 st.subheader(f"Llançaments Verificats ({len(st.session_state.cancons_reals)} cançons)")
                 df = pd.DataFrame(st.session_state.cancons_reals)
@@ -582,15 +608,18 @@ if CLIENT_ID and CLIENT_SECRET:
                 )
 
                 st.divider()
-                
-                # --- ZONA DE BOTONS 2 (Sota la taula) ---
-                col_btn_t1, col_btn_t2 = st.columns(2)
-                with col_btn_t1:
+                col_btn_taula1, col_btn_taula2 = st.columns(2)
+
+                with col_btn_taula1:
                     if st.session_state.uris_spotify:
-                        # Permetem editar el nom també aquí baix
-                        nom_llista_taula = st.text_input("Nom de la playlist a Spotify:", value=st.session_state.titol_playlist, key="input_taula")
+                        # 🔴 SOLUCIÓ: Posem key="input_nom_taula" per evitar duplicats
+                        nom_llista_taula = st.text_input(
+                            "Nom de la playlist a Spotify:", 
+                            value=st.session_state.titol_playlist,
+                            key="input_nom_taula"
+                        )
                         
-                        # 🔴 SOLUCIÓ BUG 2: Segon `key` únic
+                        # 🔴 SOLUCIÓ BUG 2: Afegim key="btn_crear_taula"
                         if st.button("Crear Playlist Automàtica a Spotify", key="btn_crear_taula"):
                             try:
                                 log(f"Creant playlist '{nom_llista_taula}' a Spotify...", "info")
@@ -599,7 +628,6 @@ if CLIENT_ID and CLIENT_SECRET:
                                     name=nom_llista_taula,
                                     public=True
                                 )
-                                # Mateix sistema de bucle segur per llistes llargues
                                 for i in range(0, len(st.session_state.uris_spotify), 100):
                                     sp.playlist_add_items(
                                         playlist_id=pl['id'],
@@ -608,11 +636,12 @@ if CLIENT_ID and CLIENT_SECRET:
                                 log(f"Playlist creada: {pl['external_urls']['spotify']}", "success")
                                 st.success(f"Playlist '{nom_llista_taula}' creada amb èxit!")
                                 st.link_button("Obrir Playlist", pl['external_urls']['spotify'])
+                                st.session_state.titol_playlist = nom_llista_taula
                             except Exception as e:
                                 log(f"Error creant playlist: {e}", "error")
                                 st.error(f"Error creant playlist: {e}")
 
-                with col_btn_t2:
+                with col_btn_taula2:
                     st.text_area("Llista de cançons per copiar:", value=st.session_state.text_copiar, height=120)
                     if st.button("Exportar CSV"):
                         csv = df.to_csv(index=False, encoding='utf-8-sig')
