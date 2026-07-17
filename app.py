@@ -575,9 +575,33 @@ if CLIENT_ID and CLIENT_SECRET:
             
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
-                if st.button("Netejar Consola"):
-                    clear_console()
-                    st.rerun()
+                    if st.session_state.uris_spotify:
+                        # Afegim l'input per editar el nom abans de crear-la
+                        st.session_state.titol_playlist = st.text_input(
+                            "Nom de la playlist a Spotify:", 
+                            value=st.session_state.titol_playlist
+                        )
+                        
+                        if st.button("Crear Playlist Automàtica a Spotify"):
+                            try:
+                                log(f"Creant playlist '{st.session_state.titol_playlist}' a Spotify...", "info")
+                                pl = sp.user_playlist_create(
+                                    user=usuari_sp['id'],
+                                    name=st.session_state.titol_playlist,
+                                    public=True
+                                )
+                                # Spotify té un límit de 100 cançons per petició 'playlist_add_items'
+                                for i in range(0, len(st.session_state.uris_spotify), 100):
+                                    sp.playlist_add_items(
+                                        playlist_id=pl['id'],
+                                        items=st.session_state.uris_spotify[i:i+100]
+                                    )
+                                log(f"Playlist creada: {pl['external_urls']['spotify']}", "success")
+                                st.success(f"Playlist '{st.session_state.titol_playlist}' creada amb èxit!")
+                                st.link_button("Obrir Playlist", pl['external_urls']['spotify'])
+                            except Exception as e:
+                                log(f"Error creant playlist: {e}", "error")
+                                st.error(f"Error creant playlist: {e}")
             
             # Mostrar resultats
             if 'cancons_reals' in st.session_state and st.session_state.cancons_reals:
