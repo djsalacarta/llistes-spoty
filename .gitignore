@@ -1,0 +1,26 @@
+# Secrets i credencials
+.streamlit/secrets.toml
+api.txt
+configuracio_api.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Entorns virtuals
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Sistema operatiu
+.DS_Store
+Thumbs.db
