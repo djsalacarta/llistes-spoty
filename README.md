@@ -1,0 +1,1 @@
+# llistes-spoty
