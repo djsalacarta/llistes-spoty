@@ -10,11 +10,110 @@ import time
 from datetime import datetime
 
 # --- 1. CONFIGURACIÓ ---
+RUTA_API_SPOTIFY = r"D:\Programa llistes Spoty\api.txt"
+RUTA_CONFIG_JSON = r"D:\Programa llistes Spoty\configuracio_api.json"
 REDIRECT_URI = "http://127.0.0.1:8501"
 
 st.set_page_config(page_title="Rastrejador de Novetats Reals", page_icon="🎛️", layout="wide")
 
-# --- CREDENCIALS (st.secrets per Streamlit Cloud o fitxers locals) ---
+# --- 2. SISTEMA DE LOGS EN TEMPS REAL ---
+def init_console():
+    if 'console_logs' not in st.session_state:
+        st.session_state.console_logs = []
+    if 'console_html' not in st.session_state:
+        st.session_state.console_html = ""
+
+def log(msg, level="info"):
+    init_console()
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    colors = {
+        "info": "#3b82f6",
+        "success": "#10b981",
+        "warning": "#f59e0b",
+        "error": "#ef4444",
+        "debug": "#6b7280"
+    }
+    icons = {
+        "info": "🔵",
+        "success": "✅",
+        "warning": "️",
+        "error": "❌",
+        "debug": ""
+    }
+    color = colors.get(level, "#6b7280")
+    icon = icons.get(level, "⚪")
+    
+    st.session_state.console_logs.append({
+        "time": timestamp,
+        "icon": icon,
+        "level": level.upper(),
+        "msg": str(msg),
+        "color": color
+    })
+    
+    if len(st.session_state.console_logs) > 200:
+        st.session_state.console_logs = st.session_state.console_logs[-200:]
+    
+    # Generar HTML per la consola
+    html_lines = []
+    for entry in st.session_state.console_logs[-50:]:
+        html_lines.append(
+            f'<div style="font-family: \'Courier New\', monospace; font-size: 11px; padding: 2px 4px; border-left: 2px solid {entry["color"]}; margin-bottom: 1px;">'
+            f'<span style="color: #888;">[{entry["time"]}]</span> '
+            f'<span style="color: {entry["color"]}; font-weight: bold;">{entry["icon"]} {entry["level"]}</span> '
+            f'<span style="color: #e0e0e0;">{entry["msg"]}</span>'
+            f'</div>'
+        )
+    
+    st.session_state.console_html = "\n".join(html_lines)
+
+def clear_console():
+    st.session_state.console_logs = []
+    st.session_state.console_html = ""
+
+def render_console_permanent():
+    """Renderitza la consola permanent amb fons negre"""
+    init_console()
+    
+    console_html = st.session_state.console_html
+    
+    if not console_html:
+        console_html = '<div style="color: #666; font-family: monospace; padding: 20px; text-align: center;">⏳ Esperant operacions...</div>'
+    
+    st.markdown(
+        f'''
+        <div style="
+            background: #0a0a0a;
+            border: 2px solid #333;
+            border-radius: 8px;
+            padding: 10px;
+            height: 500px;
+            overflow-y: auto;
+            font-family: \'Courier New\', monospace;
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);
+        ">
+            <div style="
+                position: sticky;
+                top: 0;
+                background: #1a1a1a;
+                padding: 5px 10px;
+                border-bottom: 1px solid #333;
+                margin-bottom: 10px;
+                border-radius: 4px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            ">
+                <span style="color: #00ff88; font-weight: bold; font-size: 12px;">🖥️ CONSOLA DE DEPURACIÓ - TEMPS REAL</span>
+                <span style="color: #888; font-size: 11px;">{len(st.session_state.console_logs)} registres</span>
+            </div>
+            {console_html}
+        </div>
+        ''',
+        unsafe_allow_html=True
+    )
+
+# --- 3. LECTORS DE CREDENCIALS ---
 def carregar_credencials():
     """Carrega credencials de st.secrets (Cloud) o fitxers locals (Windows)"""
     creds = {
