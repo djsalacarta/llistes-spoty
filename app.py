@@ -231,19 +231,33 @@ Respon NOMÉS amb la llista d'artistes reals separats per comes.
 
 # --- 6. VALIDACIÓ DE GÈNERE A SPOTIFY ---
 def validar_genere_artista_spotify(sp, artista, estils_permesos):
+    """
+    Valida si un artista pertany al gènere correcte.
+    Retorna True si:
+    - L'artista té gèneres que coincideixen amb els permesos
+    - L'artista NO té gèneres a Spotify (molts artistes de Mákina no en tenen)
+    - L'artista NO es troba a Spotify (pot tenir música a Discogs)
+    """
     try:
         resultats = sp.search(q=f"artist:{artista}", type="artist", limit=1)
         artists = resultats.get("artists", {}).get("items", [])
-        
+
+        # Si no el trobem a Spotify, acceptem igualment (pot tenir música a Discogs)
         if not artists:
-            log(f"Artista no trobat a Spotify: {artista}", "warning")
-            return False
-        
+            log(f"Artista no trobat a Spotify: {artista} - Acceptat per cerca a Discogs", "info")
+            return True
+
         artist = artists[0]
         genres = artist.get("genres", [])
-        
-        log(f"{artista} - Gèneres a Spotify: {genres}", "debug")
-        
+
+        log(f"{artista} - Gèneres a Spotify: {genres if genres else 'Sense gèneres'}", "debug")
+
+        # Si no té gèneres, acceptem (comportament flexible per Mákina)
+        if not genres:
+            log(f"{artista} acceptat (sense gèneres a Spotify)", "info")
+            return True
+
+        # Comprovar coincidència amb gèneres permesos
         for genre in genres:
             genre_lower = genre.lower()
             for estil_permes in estils_permesos:
@@ -251,13 +265,23 @@ def validar_genere_artista_spotify(sp, artista, estils_permesos):
                 if estil_permes_lower in genre_lower or genre_lower in estil_permes_lower:
                     log(f"{artista} és del gènere correcte: {genre}", "success")
                     return True
-        
-        log(f"{artista} NO és del gènere correcte. Gèneres trobats: {genres}", "warning")
+
+        # Si el nom de l'artista conté paraules clau del gènere, acceptem
+        artista_lower = artista.lower()
+        paraules_clau_makina = ["makina", "mákina", "hardcore", "bakalao", "rave", "tekno", "gabber", "jumpstyle"]
+        for paraula in paraules_clau_makina:
+            if paraula in artista_lower:
+                log(f"{artista} acceptat per nom (conté paraula clau del gènere)", "info")
+                return True
+
+        log(f"{artista} descartat. Gèneres trobats: {genres}", "warning")
         return False
-        
+
     except Exception as e:
         log(f"Error validant gènere de {artista}: {e}", "error")
-        return False
+        # En cas d'error, acceptem per no perdre artistes
+        return True
+
 
 # --- 7. CERCA NOvetats ARTISTA a SPOTIFY ---
 def cercar_novetats_artista_spotify(sp, artista, any_triat, limit=20):
