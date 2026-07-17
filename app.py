@@ -151,13 +151,12 @@ def log(msg, level="info"):
         st.session_state.console_logs = st.session_state.console_logs[-200:]
     html_lines = []
     for entry in st.session_state.console_logs[-20:]:
-        html_lines.append(
-            '<div style="font-family: 'Courier New', monospace; font-size: 11px; padding: 2px 4px; border-left: 2px solid ' + entry["color"] + '; margin-bottom: 1px;">'
-            '<span style="color: #888;">[' + entry["time"] + ']</span> '
-            '<span style="color: ' + entry["color"] + '; font-weight: bold;">' + entry["icon"] + ' ' + entry["level"] + '</span> '
-            '<span style="color: #e0e0e0;">' + entry["msg"] + '</span>'
-            '</div>'
-        )
+        line = '<div style="font-family: Courier New, monospace; font-size: 11px; padding: 2px 4px; border-left: 2px solid ' + entry["color"] + '; margin-bottom: 1px;">'
+        line += '<span style="color: #888;">[' + entry["time"] + ']</span> '
+        line += '<span style="color: ' + entry["color"] + '; font-weight: bold;">' + entry["icon"] + ' ' + entry["level"] + '</span> '
+        line += '<span style="color: #e0e0e0;">' + entry["msg"] + '</span>'
+        line += '</div>'
+        html_lines.append(line)
     st.session_state.console_html = "\n".join(html_lines)
 
 def clear_console():
@@ -170,7 +169,7 @@ def render_console_permanent():
     if not console_html:
         console_html = '<div style="color: #666; font-family: monospace; padding: 20px; text-align: center;">⏳ Esperant operacions...</div>'
 
-    html = '<div style="background: #0a0a0a; border: 2px solid #333; border-radius: 8px; padding: 10px; height: 280px; overflow-y: auto; font-family: 'Courier New', monospace; box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);">'
+    html = '<div style="background: #0a0a0a; border: 2px solid #333; border-radius: 8px; padding: 10px; height: 280px; overflow-y: auto; font-family: Courier New, monospace; box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);">'
     html += '<div style="position: sticky; top: 0; background: #1a1a1a; padding: 5px 10px; border-bottom: 1px solid #333; margin-bottom: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">'
     html += '<span style="color: #00ff88; font-weight: bold; font-size: 12px;">🖥️ CONSOLA DE DEPURACIO - TEMPS REAL</span>'
     html += '<span style="color: #888; font-size: 11px;">' + str(len(st.session_state.console_logs)) + ' registres</span>'
@@ -215,14 +214,14 @@ def identificar_artistes_reals_genere(estil):
             artistes_clau = dades["artistes_clau"]
             break
     prompt = "Ets un expert en musica electronica amb 20 anys d\'experiencia.\n\n"
-    prompt += "L\'usuari busca musica de l\'estil: "" + estil + ""\n\n"
+    prompt += "L\'usuari busca musica de l\'estil: \"" + estil + "\".\n\n"
     prompt += "DESCRIPCIO DEL GENERE:\n" + (info_estil if info_estil else "Musica electronica del subgenere " + estil) + "\n\n"
     prompt += "ARTISTES CONEGUTS D\'AQUEST GENERE (per referencia):\n" + (", ".join(artistes_clau) if artistes_clau else "No disponible") + "\n\n"
     prompt += "INSTRUCCIONS ESTRICTES:\n"
     prompt += "1. Identifica ARTISTES REALS I EXISTENTS d\'aquest genere musical.\n"
     prompt += "2. NOMES artistes reals que hagin publicat musica. PROHIBIT inventar.\n"
     prompt += "3. Inclou artistes classics del genere I artistes emergents/nous.\n"
-    prompt += "4. Si l\'estil es "Makina", inclou artistes de: hardcore, bakalao, hardtek, makina espanyola.\n"
+    prompt += "4. Si l\'estil es \"Makina\", inclou artistes de: hardcore, bakalao, hardtek, makina espanyola.\n"
     prompt += "5. Format: noms separats per comes.\n"
     prompt += "6. Maxim 25 artistes.\n\n"
     prompt += "Respon NOMES amb la llista d\'artistes reals separats per comes. Sense explicacions."
@@ -478,214 +477,3 @@ def verificar_i_obtenir_uris(sp, cancons):
         time.sleep(0.1)
     return cancons_verificades
 
-# --- 12. EXECUTOR PRINCIPAL ---
-if CLIENT_ID and CLIENT_SECRET:
-    try:
-        log("Inicialitzant connexio amb Spotify...", "info")
-        sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-            client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
-            redirect_uri=REDIRECT_URI, scope="playlist-modify-public"
-        ))
-        usuari_sp = sp.current_user()
-        log("Connectat a Spotify com: " + usuari_sp["display_name"], "success")
-
-        col_filtres, col_consola = st.columns([1, 2])
-
-        with col_filtres:
-            st.success("Spotify: " + usuari_sp["display_name"])
-            st.info("IA activa: " + str(MODEL_IA_VIU))
-            st.info("Discogs: " + ("Actiu" if DISCOGS_TOKEN else "Sense token"))
-
-            st.subheader("Filtres de la Cerca")
-            estil_triat = st.text_input("Estil / Genere:", "Makina")
-            mes_triat = st.selectbox("Mes de llancament:", [
-                "Tots els mesos (Any sencer)", "Gener", "Febrer", "Marc", "Abril", "Maig", "Juny",
-                "Juliol", "Agost", "Setembre", "Octubre", "Novembre", "Desembre"
-            ], index=0)
-            any_triat = st.text_input("Any / Rang (Ex: 1999, 2025/2026):", "2025/2026")
-
-            tipus_referencia = st.radio(
-                "Tipus de referencia:",
-                ["Canco", "Artista"],
-                horizontal=True
-            )
-
-            if "Canco" in tipus_referencia:
-                llavor_input = st.text_input(
-                    "Introdueix una CANCO de referencia:",
-                    placeholder="Ex: Pont Aeri - Flying Free"
-                )
-            else:
-                llavor_input = st.text_input(
-                    "Introdueix un ARTISTA de referencia:",
-                    placeholder="Ex: Pont Aeri"
-                )
-
-            quantitat = st.number_input("Nombre de cancons:", min_value=10, max_value=200, value=100, step=10)
-
-            st.subheader("Fonts de cerca")
-            usar_spotify = st.checkbox("API de Spotify", value=True)
-            usar_discogs = st.checkbox("API de Discogs", value=True)
-            usar_musicbrainz = st.checkbox("MusicBrainz", value=True)
-            usar_deezer = st.checkbox("Deezer (gratuita)", value=False)
-            usar_beatport = st.checkbox("Beatport (raspat)", value=False)
-
-            st.subheader("Opcions avancades")
-            any_estricte = st.checkbox("Any estricte (sentit classics)", value=True)
-            validar_genere = st.checkbox("Validar genere a Spotify (recomanat)", value=True)
-
-            if st.button("Comencar Rastreig de Novetats"):
-                log("Iniciant rastreig: estil=" + estil_triat + ", any=" + any_triat + ", quantitat=" + str(quantitat), "info")
-
-                artistes_reals = identificar_artistes_reals_genere(estil_triat)
-
-                if not artistes_reals:
-                    log("La IA no ha pogut identificar artistes reals", "error")
-                    st.error("La IA no ha pogut identificar artistes reals del genere.")
-                else:
-                    st.info("La IA ha identificat " + str(len(artistes_reals)) + " artistes reals de " + estil_triat + ":\n\n" + ", ".join(artistes_reals))
-
-                    totes_cancons = []
-
-                    artistes_validats = []
-                    if validar_genere:
-                        log("Validant genere de " + str(len(artistes_reals)) + " artistes (mode flexible)...", "info")
-                        estils_permesos = obtenir_estils_permesos(estil_triat)
-                        log("Estils permesos: " + str(estils_permesos), "debug")
-
-                        for idx, artista in enumerate(artistes_reals):
-                            es_valid = validar_genere_artista_spotify(sp, artista, estils_permesos)
-                            if es_valid:
-                                artistes_validats.append(artista)
-
-                        log(str(len(artistes_validats)) + " artistes validats del genere correcte (de " + str(len(artistes_reals)) + ")", "success")
-                    else:
-                        artistes_validats = artistes_reals
-
-                    if not artistes_validats:
-                        log("Cap artista ha passat la validacio de genere", "error")
-                        st.error("Cap artista ha passat la validacio de genere.")
-                    else:
-                        if usar_spotify:
-                            log("Cercant novetats de " + str(len(artistes_validats)) + " artistes a Spotify...", "info")
-                            for idx, artista in enumerate(artistes_validats):
-                                cancons_artista = cercar_novetats_artista_spotify(sp, artista, any_triat, limit=10)
-                                totes_cancons.extend(cancons_artista)
-                                log(artista + ": " + str(len(cancons_artista)) + " cancons trobades", "info")
-
-                        if usar_discogs:
-                            log("Cercant novetats de " + str(len(artistes_validats)) + " artistes a Discogs...", "info")
-                            for idx, artista in enumerate(artistes_validats):
-                                cancons_artista = cercar_novetats_artista_discogs(artista, any_triat, limit=10)
-                                totes_cancons.extend(cancons_artista)
-                                log(artista + ": " + str(len(cancons_artista)) + " cancons trobades a Discogs", "info")
-
-                        if usar_musicbrainz:
-                            log("Cercant novetats de " + str(len(artistes_validats)) + " artistes a MusicBrainz...", "info")
-                            for idx, artista in enumerate(artistes_validats):
-                                cancons_artista = cercar_novetats_artista_musicbrainz(artista, any_triat, limit=10)
-                                totes_cancons.extend(cancons_artista)
-                                log(artista + ": " + str(len(cancons_artista)) + " cancons trobades a MusicBrainz", "info")
-
-                        log("Eliminant duplicats...", "info")
-                        cancons_uniques = eliminar_duplicats(totes_cancons)
-                        log("Despres d'eliminar duplicats: " + str(len(cancons_uniques)) + " cancons", "success")
-
-                        cancons_finals = cancons_uniques[:quantitat]
-                        log("Total cancons reals trobades: " + str(len(cancons_finals)), "success")
-
-                        log("Verificant a Spotify i obtenint URIs...", "info")
-                        cancons_verificades = verificar_i_obtenir_uris(sp, cancons_finals)
-
-                        cancons_processades = []
-                        uris_tmp = []
-                        text_tmp = ""
-
-                        for idx, canco in enumerate(cancons_verificades, 1):
-                            cancons_processades.append({
-                                "NUM": idx, "ARTISTA": canco["artista"], "TITOL": canco["titol"],
-                                "BPM": canco["bpm"], "CLAU HARMONICA": canco["clau"],
-                                "ANY ORIGINARI": canco["any"], "ESTIL CONFIGURAT": estil_triat,
-                                "FONT": canco["font"], "ENLLAC SPOTIFY": canco.get("spotify_link") or "No trobat",
-                                "ENLLAC TIDAL": "No trobat"
-                            })
-                            if canco.get("spotify_uri"):
-                                uris_tmp.append(canco["spotify_uri"])
-                            text_tmp += str(idx) + ". " + canco["artista"] + " - " + canco["titol"] + " (" + str(canco["any"]) + ")\n"
-
-                        log("Llista guardada: " + str(len(cancons_processades)) + " cancons", "success")
-
-                        if 'cancons_reals' not in st.session_state:
-                            st.session_state.cancons_reals = []
-                            st.session_state.uris_spotify = []
-                            st.session_state.text_copiar = ""
-                            st.session_state.titol_playlist = ""
-
-                        st.session_state.cancons_reals = cancons_processades
-                        st.session_state.uris_spotify = uris_tmp
-                        st.session_state.text_copiar = text_tmp
-                        st.session_state.titol_playlist = estil_triat[:10] + " (" + any_triat + ") - " + str(quantitat) + " cancons"
-
-        with col_consola:
-            st.subheader("Consola de Depuracio - Temps Real")
-            render_console_permanent()
-
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                if st.button("Netejar Consola"):
-                    clear_console()
-                    st.rerun()
-
-            if 'cancons_reals' in st.session_state and st.session_state.cancons_reals:
-                st.subheader("Llancaments Verificats (" + str(len(st.session_state.cancons_reals)) + " cancons)")
-                df = pd.DataFrame(st.session_state.cancons_reals)
-                st.dataframe(
-                    df, use_container_width=True, hide_index=True,
-                    column_config={
-                        "ENLLAC SPOTIFY": st.column_config.LinkColumn("SPOTIFY"),
-                        "ENLLAC TIDAL": st.column_config.LinkColumn("TIDAL")
-                    }
-                )
-
-                st.divider()
-                col_btn1, col_btn2 = st.columns(2)
-
-                with col_btn1:
-                    if st.session_state.uris_spotify:
-                        if st.button("Crear Playlist Automatica a Spotify"):
-                            try:
-                                log("Creant playlist a Spotify...", "info")
-                                pl = sp.user_playlist_create(
-                                    user=usuari_sp["id"],
-                                    name=st.session_state.titol_playlist,
-                                    public=True
-                                )
-                                sp.playlist_add_items(
-                                    playlist_id=pl["id"],
-                                    items=st.session_state.uris_spotify
-                                )
-                                log("Playlist creada: " + pl["external_urls"]["spotify"], "success")
-                                st.success("Playlist '" + st.session_state.titol_playlist + "' creada amb exit!")
-                                st.link_button("Obrir Playlist", pl["external_urls"]["spotify"])
-                            except Exception as e:
-                                log("Error creant playlist: " + str(e), "error")
-                                st.error("Error creant playlist: " + str(e))
-
-                with col_btn2:
-                    st.text_area("Llista de cancons per copiar:", value=st.session_state.text_copiar, height=120)
-                    if st.button("Exportar CSV"):
-                        csv = df.to_csv(index=False, encoding='utf-8-sig')
-                        st.download_button(
-                            label="Descarregar CSV", data=csv,
-                            file_name=st.session_state.titol_playlist + ".csv",
-                            mime="text/csv"
-                        )
-                        log("CSV exportat", "success")
-
-    except Exception as e:
-        log("Error de sistema: " + str(e), "error")
-        st.error("Error de sistema: " + str(e))
-else:
-    log("Falten credencials de configuracio", "error")
-    st.error("Falten credencials de configuracio.")
-    st.info("Assegura't que els fitxers `api.txt` i `configuracio_api.json` existeixen a la ruta configurada, o configura els secrets a Streamlit Cloud.")
