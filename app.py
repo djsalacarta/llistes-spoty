@@ -9,49 +9,53 @@ from datetime import datetime
 # --- CONFIGURACIÓ ---
 st.set_page_config(page_title="Rastrejador de Novetats", page_icon="🎛️", layout="wide")
 
-# Funció per carregar claus des del núvol
-def get_secret(key):
-    return st.secrets.get(key, None)
-
-CLIENT_ID = get_secret("SPOTIFY_CLIENT_ID")
-CLIENT_SECRET = get_secret("SPOTIFY_CLIENT_SECRET")
-GROQ_KEY = get_secret("GROQ_KEY")
-GROQ_URL = get_secret("GROQ_URL")
-DISCOGS_TOKEN = get_secret("DISCOGS_TOKEN")
-REDIRECT_URI = "https://share.streamlit.io/" # URL estàndard de Streamlit
+# Inicialització de claus des de Streamlit Secrets
+try:
+    CLIENT_ID = st.secrets["SPOTIFY_CLIENT_ID"]
+    CLIENT_SECRET = st.secrets["SPOTIFY_CLIENT_SECRET"]
+    GROQ_KEY = st.secrets["GROQ_KEY"]
+    GROQ_URL = st.secrets["GROQ_URL"]
+    DISCOGS_TOKEN = st.secrets["DISCOGS_TOKEN"]
+    REDIRECT_URI = "https://share.streamlit.io/" # URL obligatòria per al núvol
+except Exception as e:
+    st.error("Error: Falten claus als 'Secrets' de Streamlit.")
+    st.stop()
 
 # --- CONSOLA ---
-def init_console():
-    if 'console_logs' not in st.session_state: st.session_state.console_logs = []
+if 'console_logs' not in st.session_state: st.session_state.console_logs = []
 
 def log(msg, level="info"):
-    init_console()
-    st.session_state.console_logs.append({
-        "time": datetime.now().strftime("%H:%M:%S"),
-        "level": level.upper(),
-        "msg": str(msg)
-    })
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    st.session_state.console_logs.append({"time": timestamp, "level": level.upper(), "msg": str(msg)})
 
-def render_console():
-    init_console()
-    for entry in st.session_state.console_logs[-20:]:
-        color = "#3b82f6" if entry["level"] == "INFO" else "#10b981"
-        st.markdown(f'<div style="font-family:monospace;font-size:11px;color:{color}">[{entry["time"]}] {entry["level"]}: {entry["msg"]}</div>', unsafe_allow_html=True)
-
-# --- IA I RESTA DE FUNCIONS ---
-# (Pots mantenir les teves funcions ia_identifica_artistes_i_generes, cercar_spotify, etc., tal qual les tenies)
-# NOMÉS substitueix les referències a RUTA_API_SPOTIFY per les variables CLIENT_ID/SECRET directament.
+# (Aquí mantindries les teves funcions: ia_identifica_artistes_i_generes, 
+# cercar_spotify_artista, cercar_discogs_artista, etc., tal com les tenies)
+# NOMÉS cal que t'asseguris que no utilitzin os.path ni rutes D:\
 
 # --- INTERFÍCIE ---
 st.title("🎛️ Rastrejador de Novetats")
-render_console()
 
-if not CLIENT_ID:
-    st.error("Error: Les claus no estan configurades als 'Secrets' de Streamlit.")
-else:
-    # Aquesta és l'estructura on posaries els teus menús
-    estil = st.sidebar.text_input("Estil", "Mákina")
-    if st.sidebar.button("Executar"):
-        log("Cerca iniciada...", "info")
-        # Aquí crides la teva lògica
+# Autenticació Spotify
+sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
+    client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
+    redirect_uri=REDIRECT_URI, scope="playlist-modify-public"
+))
+
+# --- DUES COLUMNES ---
+col_filtres, col_resultats = st.columns([1, 2])
+
+with col_filtres:
+    st.subheader("Filtres")
+    estil = st.text_input("Estil / Gènere:", "Mákina")
+    any_triat = st.text_input("Any / Rang:", "2025/2026")
+    quantitat = st.number_input("Nombre de cançons:", 10, 200, 100)
+    
+    if st.button("🚀 Començar Rastreig"):
+        log(f"Iniciant cerca: {estil}")
+        # Aquí crides la teva lògica de FASE 1 a FASE 6
         st.rerun()
+
+with col_resultats:
+    st.subheader("Consola")
+    for entry in reversed(st.session_state.console_logs[-20:]):
+        st.text(f"[{entry['time']}] {entry['level']}: {entry['msg']}")
