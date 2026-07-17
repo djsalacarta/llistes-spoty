@@ -151,13 +151,12 @@ def log(msg, level="info"):
         st.session_state.console_logs = st.session_state.console_logs[-200:]
     html_lines = []
     for entry in st.session_state.console_logs[-20:]:
-        line = '<div style="font-family: Courier New, monospace; font-size: 11px; padding: 2px 4px; border-left: 2px solid ' + entry["color"] + '; margin-bottom: 1px;">'
-        line += '<span style="color: #888;">[' + entry["time"] + ']</span> '
-        line += '<span style="color: ' + entry["color"] + '; font-weight: bold;">' + entry["icon"] + ' ' + entry["level"] + '</span> '
-        line += '<span style="color: #e0e0e0;">' + entry["msg"] + '</span>'
+        line = f'<div style="font-family: \'Courier New\', monospace; font-size: 11px; padding: 2px 4px; border-left: 2px solid {entry["color"]}; margin-bottom: 1px;">'
+        line += f'<span style="color: #888;">[{entry["time"]}]</span> '
+        line += f'<span style="color: {entry["color"]}; font-weight: bold;">{entry["icon"]} {entry["level"]}</span> '
+        line += f'<span style="color: #e0e0e0;">{entry["msg"]}</span>'
         line += '</div>'
         html_lines.append(line)
-    st.session_state.console_html = "\n".join(html_lines)
 
 def clear_console():
     st.session_state.console_logs = []
