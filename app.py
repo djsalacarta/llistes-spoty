@@ -64,7 +64,6 @@ DICCIONARI_ESTILS = {
 }
 
 def obtenir_info_estil(estil_usuari):
-    """Retorna la info del diccionari per un estil, o generica si no existeix"""
     estil_lower = estil_usuari.lower().strip()
     for clau, dades in DICCIONARI_ESTILS.items():
         if clau in estil_lower or estil_lower in clau:
@@ -208,7 +207,7 @@ def obtenir_model_ia():
 MODEL_IA = obtenir_model_ia() if GROQ_KEY else None
 
 # ============================================================
-# 6. IA: IDENTIFICAR ARTISTES REALS (amb context complet)
+# 6. IA: IDENTIFICAR ARTISTES REALS
 # ============================================================
 def identificar_artistes_reals_genere(estil):
     if not GROQ_KEY or not GROQ_URL:
@@ -235,7 +234,7 @@ ARTISTES CONEGUTS D'AQUEST GENERE (referencia):
 INSTRUCCIONS ESTRICTES:
 1. NOMES artistes REALS que hagin publicat musica d'aquest genere concret.
 2. PROHIBIT inventar artistes.
-3. PROHIBIT incloure artistes d'altres generes (ex: si busca Mákina, NO posar pop, rock, reggaeton, etc.)
+3. PROHIBIT incloure artistes d'altres generes (ex: si busca Makina, NO posar pop, rock, reggaeton, etc.)
 4. Inclou artistes classics del genere I artistes emergents actuals.
 5. Format: noms separats per comes.
 6. Maxim 25 artistes.
@@ -274,7 +273,6 @@ Respon NOMES amb la llista d'artistes reals separats per comes. Sense numeros, s
                 if any(sg in a_lower for sg in subgeneres):
                     artistes_filtrats.append(a)
                     continue
-                # Si no passa cap filtre, descartar (probablement inventat o d'altre genere)
                 log(f"Filtrat: {a} (no coincideix amb el genere)", "debug")
 
             if artistes_filtrats:
@@ -291,49 +289,55 @@ Respon NOMES amb la llista d'artistes reals separats per comes. Sense numeros, s
         return info["artistes_reals"][:15] if info["artistes_reals"] else []
 
 # ============================================================
-# 7. VALIDACIO DE GENERE A SPOTIFY
+# 7. VALIDACIO DE CANCO (NO nomes artista)
 # ============================================================
-def validar_genere_artista(sp, artista, estil):
-    try:
-        resultats = sp.search(q=f"artist:{artista}", type="artist", limit=1)
-        artists = resultats.get("artists", {}).get("items", [])
+def validar_canco(canco, artista_nom, estil):
+    """Valida que una canco realment pertany al genere correcte"""
+    info = obtenir_info_estil(estil)
+    subgeneres = info["subgeneres"]
+    artistes_clau = [a.lower() for a in info["artistes_reals"]]
 
-        if not artists:
-            log(f"{artista}: no trobat a Spotify", "info")
-            return True
+    artista_canco = canco["artista"].lower()
+    titol_canco = canco["titol"].lower()
 
-        genres = artists[0].get("genres", [])
-        log(f"{artista} - generes: {genres if genres else 'cap'}", "debug")
-
-        if not genres:
-            return True
-
-        estils_perm = estils_permesos(estil)
-        for genre in genres:
-            g_lower = genre.lower()
-            for ep in estils_perm:
-                if ep.lower() in g_lower or g_lower in ep.lower():
-                    log(f"{artista} validat: {genre}", "success")
-                    return True
-
-        # Si el nom de l'artista conte paraules clau del genere
-        info = obtenir_info_estil(estil)
-        a_lower = artista.lower()
-        if any(sg in a_lower for sg in info["subgeneres"]):
-            log(f"{artista} acceptat per nom", "info")
-            return True
-
-        log(f"{artista} descartat (generes: {genres})", "warning")
-        return False
-
-    except Exception as e:
-        log(f"Error validant {artista}: {e}", "error")
+    # 1. Si l'artista de la canco coincideix amb l'artista buscat, OK
+    if artista_nom.lower() in artista_canco or artista_canco in artista_nom.lower():
         return True
 
+    # 2. Si l'artista de la canco es un artiste conegut del genere, OK
+    if any(known in artista_canco for known in artistes_clau):
+        return True
+
+    # 3. Si el nom de l'artista o titol conte paraules clau del genere, OK
+    if any(sg in artista_canco for sg in subgeneres):
+        return True
+
+    # 4. DESCARTAR: artistes amb noms generics que poden ser d'altres generes
+    # Llista de paraules que indiquen altres generes
+    paraules_descartar = [
+        "gospel", "cristiano", "christian", "worship", "hallelujah", "jesus", "god",
+        "symphony", "orchestra", "concerto", "opus", "classical", "baroque",
+        "reggaeton", "dembow", "perreo", "trap", "drill",
+        "metal", "death", "black metal", "thrash",
+        "country", "folk", "bluegrass",
+        "jazz", "swing", "bebop",
+        "salsa", "bachata", "merengue", "cumbia",
+        "flamenco", "rumba", "sevillanas"
+    ]
+
+    text_combinat = f"{artista_canco} {titol_canco}"
+    for paraula in paraules_descartar:
+        if paraula in text_combinat:
+            log(f"DESCARTAT (altre genere): {canco['artista']} - {canco['titol']}", "debug")
+            return False
+
+    # 5. Per defecte, acceptar (es preferible tenir falsos positius que falsos negatius)
+    return True
+
 # ============================================================
-# 8. CERCA NOVETATS - TOTES LES APIs
+# 8. CERCA NOVETATS SPOTIFY (amb validacio de canco)
 # ============================================================
-def cercar_spotify(sp, artista, any_triat, limit=20):
+def cercar_spotify(sp, artista, estil, any_triat, limit=20):
     cancons = []
     if "/" in any_triat:
         parts = any_triat.split("/")
@@ -349,44 +353,54 @@ def cercar_spotify(sp, artista, any_triat, limit=20):
             any_min = any_max = 2025
 
     try:
-        # Estrategia 1: per any
+        # Estrategia 1: cerca per artista + any (mes especifica)
         query = f'artist:"{artista}" year:{any_min}-{any_max}'
         resultats = sp.search(q=query, type="track", limit=limit)
         for track in resultats.get("tracks", {}).get("items", []):
             try:
                 any_ll = int(track.get("album", {}).get("release_date", "").split("-")[0])
                 if any_min <= any_ll <= any_max:
-                    cancons.append({
+                    canco = {
                         "artista": track["artists"][0]["name"], "titol": track["name"],
                         "bpm": "N/D", "clau": "N/D", "any": any_ll,
                         "spotify_uri": track["uri"],
                         "spotify_link": track["external_urls"]["spotify"],
                         "font": "Spotify"
-                    })
+                    }
+                    # VALIDAR que la canco realment es del genere
+                    if validar_canco(canco, artista, estil):
+                        cancons.append(canco)
+                    else:
+                        log(f"Filtrada: {canco['artista']} - {canco['titol']}", "debug")
             except:
                 pass
 
-        # Estrategia 2: general + filtre
+        # Estrategia 2: general + filtre (si no trobem res)
         if not cancons:
             resultats2 = sp.search(q=f'artist:"{artista}"', type="track", limit=50)
             for track in resultats2.get("tracks", {}).get("items", []):
                 try:
                     any_ll = int(track.get("album", {}).get("release_date", "").split("-")[0])
                     if any_min <= any_ll <= any_max:
-                        cancons.append({
+                        canco = {
                             "artista": track["artists"][0]["name"], "titol": track["name"],
                             "bpm": "N/D", "clau": "N/D", "any": any_ll,
                             "spotify_uri": track["uri"],
                             "spotify_link": track["external_urls"]["spotify"],
                             "font": "Spotify"
-                        })
+                        }
+                        if validar_canco(canco, artista, estil):
+                            cancons.append(canco)
                 except:
                     pass
     except Exception as e:
         log(f"Error Spotify {artista}: {e}", "error")
     return cancons
 
-def cercar_discogs(artista, any_triat, limit=20):
+# ============================================================
+# 9. CERCA DISCOGS (amb validacio)
+# ============================================================
+def cercar_discogs(artista, estil, any_triat, limit=20):
     cancons = []
     if "/" in any_triat:
         parts = any_triat.split("/")
@@ -413,18 +427,23 @@ def cercar_discogs(artista, any_triat, limit=20):
                 for r in resposta.json().get("results", [])[:limit]:
                     year = r.get("year")
                     if year and any_min <= year <= any_max:
-                        cancons.append({
+                        canco = {
                             "artista": r.get("artist", artista), "titol": r.get("title", ""),
                             "bpm": "N/D", "clau": "N/D", "any": year,
                             "spotify_uri": None, "spotify_link": None,
                             "discogs_link": r.get("resource_url", ""), "font": "Discogs"
-                        })
+                        }
+                        if validar_canco(canco, artista, estil):
+                            cancons.append(canco)
             time.sleep(0.5)
         except Exception as e:
             log(f"Error Discogs {artista}: {e}", "debug")
     return cancons
 
-def cercar_musicbrainz(artista, any_triat, limit=20):
+# ============================================================
+# 10. CERCA MUSICBRAINZ (amb validacio)
+# ============================================================
+def cercar_musicbrainz(artista, estil, any_triat, limit=20):
     cancons = []
     if "/" in any_triat:
         parts = any_triat.split("/")
@@ -455,11 +474,13 @@ def cercar_musicbrainz(artista, any_triat, limit=20):
                             date = grav.get("first-release-date", "")
                             any_grav = int(date.split("-")[0]) if date else any_min
                             if any_min <= any_grav <= any_max:
-                                cancons.append({
+                                canco = {
                                     "artista": artista, "titol": grav.get("title", ""),
                                     "bpm": "N/D", "clau": "N/D", "any": any_grav,
                                     "spotify_uri": None, "spotify_link": None, "font": "MusicBrainz"
-                                })
+                                }
+                                if validar_canco(canco, artista, estil):
+                                    cancons.append(canco)
                         except:
                             pass
                 time.sleep(1)
@@ -467,7 +488,10 @@ def cercar_musicbrainz(artista, any_triat, limit=20):
         log(f"Error MusicBrainz {artista}: {e}", "debug")
     return cancons
 
-def cercar_deezer(artista, any_triat, limit=20):
+# ============================================================
+# 11. CERCA DEEZER (amb validacio)
+# ============================================================
+def cercar_deezer(artista, estil, any_triat, limit=20):
     cancons = []
     if "/" in any_triat:
         parts = any_triat.split("/")
@@ -490,12 +514,14 @@ def cercar_deezer(artista, any_triat, limit=20):
                 try:
                     any_ll = int(track.get("album", {}).get("release_date", "").split("-")[0])
                     if any_min <= any_ll <= any_max:
-                        cancons.append({
+                        canco = {
                             "artista": track["artist"]["name"], "titol": track["title"],
                             "bpm": "N/D", "clau": "N/D", "any": any_ll,
                             "spotify_uri": None, "spotify_link": None,
                             "deezer_link": track.get("link", ""), "font": "Deezer"
-                        })
+                        }
+                        if validar_canco(canco, artista, estil):
+                            cancons.append(canco)
                 except:
                     pass
     except Exception as e:
@@ -503,7 +529,7 @@ def cercar_deezer(artista, any_triat, limit=20):
     return cancons
 
 # ============================================================
-# 9. UTILITATS
+# 12. UTILITATS
 # ============================================================
 def eliminar_duplicats(cancons):
     vistes = set()
@@ -536,7 +562,7 @@ def verificar_uris(sp, cancons):
     return verificades
 
 # ============================================================
-# 10. SESSION STATE
+# 13. SESSION STATE
 # ============================================================
 if 'cancons_reals' not in st.session_state:
     st.session_state.cancons_reals = []
@@ -548,7 +574,7 @@ if 'titol_playlist' not in st.session_state:
     st.session_state.titol_playlist = "Nova Playlist"
 
 # ============================================================
-# 11. INTERFICIE PRINCIPAL
+# 14. INTERFICIE PRINCIPAL
 # ============================================================
 if CLIENT_ID and CLIENT_SECRET:
     try:
@@ -562,7 +588,7 @@ if CLIENT_ID and CLIENT_SECRET:
 
         col_esquerra, col_dreta = st.columns([1, 2])
 
-        # ============= COLUMNA ESQUERRA: MENU MINIMAL =============
+        # ============= COLUMNA ESQUERRA =============
         with col_esquerra:
             st.success(f"Spotify: {usuari_sp['display_name']}")
             st.info(f"IA: {MODEL_IA}")
@@ -601,85 +627,72 @@ if CLIENT_ID and CLIENT_SECRET:
                     totes_cancons = []
 
                     # FASE 2: Validar genere
-                    artistes_validats = []
-                    if validar_genere:
-                        log("Validant artistes...", "info")
-                        for artista in artistes_reals:
-                            if validar_genere_artista(sp, artista, estil_triat):
-                                artistes_validats.append(artista)
-                        log(f"{len(artistes_validats)} artistes validats", "success")
-                    else:
-                        artistes_validats = artistes_reals
+                    artistes_validats = artistes_reals if not validar_genere else artistes_reals
 
-                    if not artistes_validats:
-                        log("Cap artista validat", "error")
-                        st.error("Cap artista ha passat la validacio.")
-                    else:
-                        # FASE 3: Cercar a TOTES les APIs (sempre engegades)
-                        log("Cercant a Spotify...", "info")
-                        for artista in artistes_validats:
-                            cancons = cercar_spotify(sp, artista, any_triat, limit=10)
-                            totes_cancons.extend(cancons)
-                            if cancons:
-                                log(f"{artista}: {len(cancons)} Spotify", "info")
+                    # FASE 3: Cercar a TOTES les APIs (sempre engegades)
+                    log("Cercant a Spotify...", "info")
+                    for artista in artistes_validats:
+                        cancons = cercar_spotify(sp, artista, estil_triat, any_triat, limit=10)
+                        totes_cancons.extend(cancons)
+                        if cancons:
+                            log(f"{artista}: {len(cancons)} Spotify", "info")
 
-                        log("Cercant a Discogs...", "info")
-                        for artista in artistes_validats:
-                            cancons = cercar_discogs(artista, any_triat, limit=10)
-                            totes_cancons.extend(cancons)
-                            if cancons:
-                                log(f"{artista}: {len(cancons)} Discogs", "info")
+                    log("Cercant a Discogs...", "info")
+                    for artista in artistes_validats:
+                        cancons = cercar_discogs(artista, estil_triat, any_triat, limit=10)
+                        totes_cancons.extend(cancons)
+                        if cancons:
+                            log(f"{artista}: {len(cancons)} Discogs", "info")
 
-                        log("Cercant a MusicBrainz...", "info")
-                        for artista in artistes_validats:
-                            cancons = cercar_musicbrainz(artista, any_triat, limit=10)
-                            totes_cancons.extend(cancons)
-                            if cancons:
-                                log(f"{artista}: {len(cancons)} MusicBrainz", "info")
+                    log("Cercant a MusicBrainz...", "info")
+                    for artista in artistes_validats:
+                        cancons = cercar_musicbrainz(artista, estil_triat, any_triat, limit=10)
+                        totes_cancons.extend(cancons)
+                        if cancons:
+                            log(f"{artista}: {len(cancons)} MusicBrainz", "info")
 
-                        log("Cercant a Deezer...", "info")
-                        for artista in artistes_validats:
-                            cancons = cercar_deezer(artista, any_triat, limit=10)
-                            totes_cancons.extend(cancons)
-                            if cancons:
-                                log(f"{artista}: {len(cancons)} Deezer", "info")
+                    log("Cercant a Deezer...", "info")
+                    for artista in artistes_validats:
+                        cancons = cercar_deezer(artista, estil_triat, any_triat, limit=10)
+                        totes_cancons.extend(cancons)
+                        if cancons:
+                            log(f"{artista}: {len(cancons)} Deezer", "info")
 
-                        # FASE 4: Processar
-                        log("Eliminant duplicats...", "info")
-                        cancons_uniques = eliminar_duplicats(totes_cancons)
-                        log(f"Uniques: {len(cancons_uniques)}", "success")
+                    # FASE 4: Processar
+                    log("Eliminant duplicats...", "info")
+                    cancons_uniques = eliminar_duplicats(totes_cancons)
+                    log(f"Uniques: {len(cancons_uniques)}", "success")
 
-                        cancons_finals = cancons_uniques[:quantitat]
-                        log(f"Total: {len(cancons_finals)} cancons", "success")
+                    cancons_finals = cancons_uniques[:quantitat]
+                    log(f"Total: {len(cancons_finals)} cancons", "success")
 
-                        log("Verificant a Spotify...", "info")
-                        cancons_verificades = verificar_uris(sp, cancons_finals)
+                    log("Verificant a Spotify...", "info")
+                    cancons_verificades = verificar_uris(sp, cancons_finals)
 
-                        processades = []
-                        uris = []
-                        text = ""
-                        for idx, c in enumerate(cancons_verificades, 1):
-                            processades.append({
-                                "NUM": idx, "ARTISTA": c["artista"], "TITOL": c["titol"],
-                                "BPM": c["bpm"], "CLAU": c["clau"], "ANY": c["any"],
-                                "ESTIL": estil_triat, "FONT": c["font"],
-                                "SPOTIFY": c.get("spotify_link") or "No trobat",
-                                "DISCOGS": c.get("discogs_link") or "No trobat",
-                                "DEEZER": c.get("deezer_link") or "No trobat"
-                            })
-                            if c.get("spotify_uri"):
-                                uris.append(c["spotify_uri"])
-                            text += f"{idx}. {c['artista']} - {c['titol']} ({c['any']})\n"
+                    processades = []
+                    uris = []
+                    text = ""
+                    for idx, c in enumerate(cancons_verificades, 1):
+                        processades.append({
+                            "NUM": idx, "ARTISTA": c["artista"], "TITOL": c["titol"],
+                            "BPM": c["bpm"], "CLAU": c["clau"], "ANY": c["any"],
+                            "ESTIL": estil_triat, "FONT": c["font"],
+                            "SPOTIFY": c.get("spotify_link") or "No trobat",
+                            "DISCOGS": c.get("discogs_link") or "No trobat",
+                            "DEEZER": c.get("deezer_link") or "No trobat"
+                        })
+                        if c.get("spotify_uri"):
+                            uris.append(c["spotify_uri"])
+                        text += f"{idx}. {c['artista']} - {c['titol']} ({c['any']})\n"
 
-                        st.session_state.cancons_reals = processades
-                        st.session_state.uris_spotify = uris
-                        st.session_state.text_copiar = text
-                        st.session_state.titol_playlist = f"{estil_triat} ({any_triat})"
-                        log(f"Llista guardada: {len(processades)} cancons", "success")
+                    st.session_state.cancons_reals = processades
+                    st.session_state.uris_spotify = uris
+                    st.session_state.text_copiar = text
+                    st.session_state.titol_playlist = f"{estil_triat} ({any_triat})"
+                    log(f"Llista guardada: {len(processades)} cancons", "success")
 
-        # ============= COLUMNA DRETA: CONSOLA + RESULTATS =============
+        # ============= COLUMNA DRETA =============
         with col_dreta:
-            # --- CONSOLA (superior) ---
             st.subheader("Consola de Depuracio")
             render_console()
 
@@ -689,7 +702,6 @@ if CLIENT_ID and CLIENT_SECRET:
 
             st.divider()
 
-            # --- RESULTATS (inferior) ---
             if st.session_state.cancons_reals:
                 st.subheader(f"Resultats ({len(st.session_state.cancons_reals)} cancons)")
                 df = pd.DataFrame(st.session_state.cancons_reals)
