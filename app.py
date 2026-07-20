@@ -23,9 +23,7 @@ st.set_page_config(page_title="Rastrejador de Novetats Reals", page_icon="🎛�
 # ============================================================
 # 2. BASE DE DADES SQLITE (APRENENTATGE)
 # ============================================================
-def # Debug: mostrem on es crea la DB
-log(f"DB ubicada a: {RUTA_DB}", "debug")
-init_db():
+def init_db():
     conn = sqlite3.connect(RUTA_DB)
     cursor = conn.cursor()
     cursor.execute('''
@@ -187,8 +185,6 @@ def obtenir_estadistiques_db():
         "top_generes": top_generes
     }
 
-# Debug: mostrem on es crea la DB
-log(f"DB ubicada a: {RUTA_DB}", "debug")
 init_db()
 
 LLISTA_NEGRA = ["tuyo", "rimsky-korsakov", "mussorgsky", "modest mussorgsky", "nikolai rimsky-korsakov"]
@@ -279,7 +275,7 @@ def render_console():
     init_console()
     html = st.session_state.console_html or '<div style="color: #666; font-family: monospace; padding: 20px; text-align: center;">⏳ Esperant operacions...</div>'
     st.markdown(f"""
-    <div style="background: #0a0a0a; border: 2px solid #333; border-radius: 8px; padding: 10px; height: 150px; overflow-y: auto; font-family: Courier New, monospace; box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);">
+    <div style="background: #0a0a0a; border: 2px solid #333; border-radius: 8px; padding: 10px; height: 120px; overflow-y: auto; font-family: Courier New, monospace; box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);">
         <div style="position: sticky; top: 0; background: #1a1a1a; padding: 5px 10px; border-bottom: 1px solid #333; margin-bottom: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
             <span style="color: #00ff88; font-weight: bold; font-size: 12px;">🖥️ CONSOLA</span>
             <span style="color: #888; font-size: 11px;">{len(st.session_state.console_logs)} registres</span>
@@ -1032,7 +1028,7 @@ if CLIENT_ID and CLIENT_SECRET:
         # PESTANYA 2: CERCAR CANÇONS
         # ========================================================
         with tab_cercar:
-            col_esquerra, col_dreta = st.columns([1, 2])
+            col_esquerra, col_dreta = st.columns([1, 1.2])
 
             with col_esquerra:
                 st.subheader("Cerca")
@@ -1067,7 +1063,22 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 any_estricte = st.checkbox("Any estricte", value=True, key="chk_estricte")
 
-                if st.button("🔍 Comencar Rastreig", key="btn_rastreig", use_container_width=True):
+                col_rastreig, col_refrescar = st.columns(2)
+                with col_rastreig:
+                    btn_rastreig = st.button("🔍 Comencar Rastreig", key="btn_rastreig", use_container_width=True)
+                with col_refrescar:
+                    if st.button("🔄 Refrescar Artistes DB", key="btn_refrescar_db", use_container_width=True):
+                        artistes_db = consultar_artistes_db(estil_triat, min_confiança=min_conf)
+                        if artistes_db:
+                            st.session_state.artistes_ultima_cerca = [(nom, sub, conf) for nom, sub, conf in artistes_db]
+                            log(f"Refrescat: {len(artistes_db)} artistes de la DB per '{estil_triat}'", "success")
+                            st.success(f"🔄 {len(artistes_db)} artistes carregats de la base de dades!")
+                        else:
+                            st.warning(f"No hi ha artistes a la DB per '{estil_triat}'.")
+                            st.session_state.artistes_ultima_cerca = []
+                        st.rerun()
+
+                if btn_rastreig:
                     log(f"Rastreig: {estil_triat} | {any_triat} | {quantitat} cancons", "info")
 
                     tipus_cerca = detectar_tipus_cerca(any_triat)
@@ -1176,20 +1187,39 @@ if CLIENT_ID and CLIENT_SECRET:
                 if st.session_state.artistes_ultima_cerca:
                     with st.expander("🧠 Feedback Artistes", expanded=False):
                         st.write("Marca quins artistes SON d'aquest estil:")
-                        for i, (artista, genere, conf) in enumerate(st.session_state.artistes_ultima_cerca):
-                            cols = st.columns([3, 1, 1])
-                            with cols[0]:
-                                st.write(f"**{artista}** ({genere}) [{conf}]")
-                            with cols[1]:
-                                if st.button(f"✅ Si", key=f"btn_si_{i}"):
-                                    guardar_artista_confirmat(artista, estil_triat, genere, "usuari", "segur")
-                                    log(f"DB: {artista} marcat com a SEGUR", "success")
-                                    st.rerun()
-                            with cols[2]:
-                                if st.button(f"❌ No", key=f"btn_no_{i}"):
-                                    guardar_artista_rebutjat(artista, estil_triat, "No es del genere (usuari)")
-                                    log(f"DB: {artista} marcat com a REBUTJAT", "warning")
-                                    st.rerun()
+                        # Filtrem artistes ja processats
+                        artistes_pendents = []
+                        for a, g, c in st.session_state.artistes_ultima_cerca:
+                            conn_fb = db_conn()
+                            cursor_fb = conn_fb.cursor()
+                            cursor_fb.execute("SELECT 1 FROM artistes_rebutjats WHERE nom = ? AND genere = ?", (a, estil_triat))
+                            es_rebutjat = cursor_fb.fetchone() is not None
+                            cursor_fb.execute("SELECT confiança FROM artistes_confirmats WHERE nom = ? AND genere = ?", (a, estil_triat))
+                            fila = cursor_fb.fetchone()
+                            conn_fb.close()
+                            if es_rebutjat:
+                                continue
+                            if fila and fila[0] == "segur":
+                                continue
+                            artistes_pendents.append((a, g, c))
+
+                        if not artistes_pendents:
+                            st.success("✅ Tots els artistes ja han estat validats!")
+                        else:
+                            for i, (artista, genere, conf) in enumerate(artistes_pendents):
+                                cols = st.columns([3, 1, 1])
+                                with cols[0]:
+                                    st.write(f"**{artista}** ({genere}) [{conf}]")
+                                with cols[1]:
+                                    if st.button(f"✅ Si", key=f"btn_si_{i}"):
+                                        guardar_artista_confirmat(artista, estil_triat, genere, "usuari", "segur")
+                                        log(f"DB: {artista} marcat com a SEGUR", "success")
+                                        st.rerun()
+                                with cols[2]:
+                                    if st.button(f"❌ No", key=f"btn_no_{i}"):
+                                        guardar_artista_rebutjat(artista, estil_triat, "No es del genere (usuari)")
+                                        log(f"DB: {artista} marcat com a REBUTJAT", "warning")
+                                        st.rerun()
 
                 st.divider()
 
