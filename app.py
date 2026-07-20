@@ -23,7 +23,9 @@ st.set_page_config(page_title="Rastrejador de Novetats Reals", page_icon="ðŸŽ›ï¸
 # ============================================================
 # 2. BASE DE DADES SQLITE (APRENENTATGE)
 # ============================================================
-def init_db():
+def # Debug: mostrem on es crea la DB
+log(f"DB ubicada a: {RUTA_DB}", "debug")
+init_db():
     conn = sqlite3.connect(RUTA_DB)
     cursor = conn.cursor()
     cursor.execute('''
@@ -185,6 +187,8 @@ def obtenir_estadistiques_db():
         "top_generes": top_generes
     }
 
+# Debug: mostrem on es crea la DB
+log(f"DB ubicada a: {RUTA_DB}", "debug")
 init_db()
 
 LLISTA_NEGRA = ["tuyo", "rimsky-korsakov", "mussorgsky", "modest mussorgsky", "nikolai rimsky-korsakov"]
