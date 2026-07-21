@@ -89,7 +89,7 @@ def consultar_artistes_db(genere, min_confiança="probable"):
     cursor.execute('''
         SELECT nom, subgenere, confiança, cerca_count 
         FROM artistes_confirmats 
-        WHERE LOWER(genere) = LOWER(?) 
+        WHERE genere = ? 
         ORDER BY 
             CASE confiança WHEN 'segur' THEN 1 WHEN 'probable' THEN 2 ELSE 3 END,
             cerca_count DESC
@@ -108,7 +108,7 @@ def consultar_artistes_db(genere, min_confiança="probable"):
 def consultar_rebutjats_db(genere):
     conn = db_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT nom FROM artistes_rebutjats WHERE LOWER(genere) = LOWER(?)", (genere,))
+    cursor.execute("SELECT nom FROM artistes_rebutjats WHERE genere = ?", (genere,))
     resultats = {r[0] for r in cursor.fetchall()}
     conn.close()
     return resultats
@@ -116,7 +116,6 @@ def consultar_rebutjats_db(genere):
 def guardar_artista_confirmat(nom, genere, subgenere=None, font="IA", confiança="probable"):
     conn = db_conn()
     cursor = conn.cursor()
-    genere_norm = genere.strip().lower()
     cursor.execute('''
         INSERT INTO artistes_confirmats (nom, genere, subgenere, font, confiança, cerca_count)
         VALUES (?, ?, ?, ?, ?, 1)
@@ -124,18 +123,17 @@ def guardar_artista_confirmat(nom, genere, subgenere=None, font="IA", confiança
             cerca_count = cerca_count + 1,
             confiança = CASE WHEN excluded.confiança = 'segur' THEN 'segur' ELSE artistes_confirmats.confiança END,
             data_afegit = CURRENT_TIMESTAMP
-    ''', (nom, genere_norm, subgenere, font, confiança))
+    ''', (nom, genere, subgenere, font, confiança))
     conn.commit()
     conn.close()
 
 def guardar_artista_rebutjat(nom, genere, motiu="No es del genere"):
     conn = db_conn()
     cursor = conn.cursor()
-    genere_norm = genere.strip().lower()
     cursor.execute('''
         INSERT OR IGNORE INTO artistes_rebutjats (nom, genere, motiu)
         VALUES (?, ?, ?)
-    ''', (nom, genere_norm, motiu))
+    ''', (nom, genere, motiu))
     conn.commit()
     conn.close()
 
@@ -277,7 +275,7 @@ def render_console():
     init_console()
     html = st.session_state.console_html or '<div style="color: #666; font-family: monospace; padding: 20px; text-align: center;">⏳ Esperant operacions...</div>'
     st.markdown(f"""
-    <div style="background: #0a0a0a; border: 2px solid #333; border-radius: 8px; padding: 10px; height: 120px; overflow-y: auto; font-family: Courier New, monospace; box-shadow: 0 0 20px rgba(0, 255, 136, 0.1); width: 100%; box-sizing: border-box;">
+    <div style="background: #0a0a0a; border: 1px solid #333; border-radius: 6px; padding: 8px; height: 100px; overflow-y: auto; font-family: Courier New, monospace; box-shadow: 0 0 10px rgba(0, 255, 136, 0.05); width: 100%; box-sizing: border-box;">
         <div style="position: sticky; top: 0; background: #1a1a1a; padding: 5px 10px; border-bottom: 1px solid #333; margin-bottom: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
             <span style="color: #00ff88; font-weight: bold; font-size: 12px;">🖥️ CONSOLA</span>
             <span style="color: #888; font-size: 11px;">{len(st.session_state.console_logs)} registres</span>
@@ -956,7 +954,7 @@ if CLIENT_ID and CLIENT_SECRET:
             st.info(f"Discogs: {'Actiu' if DISCOGS_TOKEN else 'Sense token'}")
 
         # ===== PESTANYES =====
-        tab_cercar, tab_aprendre = st.tabs(["🔍 Cercar Cançons", "🎓 Aprendre"])
+        tab_aprendre, tab_cercar = st.tabs(["🎓 Aprendre", "🔍 Cercar Cançons"])
 
         # ========================================================
         # PESTANYA 1: APRENDRE
@@ -1030,7 +1028,7 @@ if CLIENT_ID and CLIENT_SECRET:
         # PESTANYA 2: CERCAR CANÇONS
         # ========================================================
         with tab_cercar:
-            col_esquerra, col_dreta = st.columns([1, 1.2])
+            col_esquerra, col_dreta = st.columns([1.8, 1])
 
             with col_esquerra:
                 st.subheader("Cerca")
@@ -1057,17 +1055,20 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 col_opt1, col_opt2 = st.columns(2)
                 with col_opt1:
-                    max_per_artista = st.number_input("Max per artista:", min_value=1, max_value=15, value=5, step=1, key="input_max_artista")
+                    max_per_artista = st.number_input("Max per artista:", min_value=1, max_value=10, value=3, step=1, key="input_max_artista")
+                    validar_genere = st.checkbox("Validar genere", value=True, key="chk_validar")
                 with col_opt2:
                     ordenacio = st.selectbox("Ordenar per:", ["popularitat", "bpm", "any", "aleatori"], index=0, key="sel_ordenacio")
                     min_conf = st.selectbox("Min confiança DB:", ["segur", "probable", "dubtos"], index=1, key="sel_conf")
 
+                any_estricte = st.checkbox("Any estricte", value=True, key="chk_estricte")
 
                 col_rastreig, col_refrescar = st.columns(2)
                 with col_rastreig:
                     btn_rastreig = st.button("🔍 Comencar Rastreig", key="btn_rastreig", use_container_width=True)
                 with col_refrescar:
                     if st.button("🔄 Refrescar Artistes DB", key="btn_refrescar_db", use_container_width=True):
+                        st.session_state.artistes_processats_feedback = set()
                         artistes_db = consultar_artistes_db(estil_triat, min_confiança=min_conf)
                         if artistes_db:
                             st.session_state.artistes_ultima_cerca = [(nom, sub, conf) for nom, sub, conf in artistes_db]
@@ -1079,6 +1080,8 @@ if CLIENT_ID and CLIENT_SECRET:
                         st.rerun()
 
                 if btn_rastreig:
+                    # Netegem la llista de processats per la nova cerca
+                    st.session_state.artistes_processats_feedback = set()
                     log(f"Rastreig: {estil_triat} | {any_triat} | {quantitat} cancons", "info")
 
                     tipus_cerca = detectar_tipus_cerca(any_triat)
@@ -1185,21 +1188,33 @@ if CLIENT_ID and CLIENT_SECRET:
                 st.divider()
 
                 if st.session_state.artistes_ultima_cerca:
-                    with st.expander("🧠 Feedback Artistes", expanded=False):
+                    # Inicialitzem la llista d'artistes processats a la sessió
+                if 'artistes_processats_feedback' not in st.session_state:
+                    st.session_state.artistes_processats_feedback = set()
+
+                with st.expander("🧠 Feedback Artistes", expanded=False):
                         st.write("Marca quins artistes SON d'aquest estil:")
-                        # Filtrem artistes ja processats
+
+                        # Filtrem artistes ja processats (DB + sessió actual)
                         artistes_pendents = []
                         for a, g, c in st.session_state.artistes_ultima_cerca:
+                            # Saltem si ja s'ha processat en aquesta sessió
+                            clau_sessio = f"{a.lower()}|{estil_triat.lower()}"
+                            if clau_sessio in st.session_state.artistes_processats_feedback:
+                                continue
+
                             conn_fb = db_conn()
                             cursor_fb = conn_fb.cursor()
-                            cursor_fb.execute("SELECT 1 FROM artistes_rebutjats WHERE nom = ? AND genere = ?", (a, estil_triat))
+                            cursor_fb.execute("SELECT 1 FROM artistes_rebutjats WHERE LOWER(nom) = LOWER(?) AND LOWER(genere) = LOWER(?)", (a, estil_triat))
                             es_rebutjat = cursor_fb.fetchone() is not None
-                            cursor_fb.execute("SELECT confiança FROM artistes_confirmats WHERE nom = ? AND genere = ?", (a, estil_triat))
+                            cursor_fb.execute("SELECT confiança FROM artistes_confirmats WHERE LOWER(nom) = LOWER(?) AND LOWER(genere) = LOWER(?)", (a, estil_triat))
                             fila = cursor_fb.fetchone()
                             conn_fb.close()
                             if es_rebutjat:
+                                st.session_state.artistes_processats_feedback.add(clau_sessio)
                                 continue
                             if fila and fila[0] == "segur":
+                                st.session_state.artistes_processats_feedback.add(clau_sessio)
                                 continue
                             artistes_pendents.append((a, g, c))
 
@@ -1211,13 +1226,15 @@ if CLIENT_ID and CLIENT_SECRET:
                                 with cols[0]:
                                     st.write(f"**{artista}** ({genere}) [{conf}]")
                                 with cols[1]:
-                                    if st.button(f"✅ Si", key=f"btn_si_{i}"):
+                                    if st.button(f"✅ Si", key=f"btn_si_{i}_{artista[:10]}"):
                                         guardar_artista_confirmat(artista, estil_triat, genere, "usuari", "segur")
+                                        st.session_state.artistes_processats_feedback.add(f"{artista.lower()}|{estil_triat.lower()}")
                                         log(f"DB: {artista} marcat com a SEGUR", "success")
                                         st.rerun()
                                 with cols[2]:
-                                    if st.button(f"❌ No", key=f"btn_no_{i}"):
+                                    if st.button(f"❌ No", key=f"btn_no_{i}_{artista[:10]}"):
                                         guardar_artista_rebutjat(artista, estil_triat, "No es del genere (usuari)")
+                                        st.session_state.artistes_processats_feedback.add(f"{artista.lower()}|{estil_triat.lower()}")
                                         log(f"DB: {artista} marcat com a REBUTJAT", "warning")
                                         st.rerun()
 
