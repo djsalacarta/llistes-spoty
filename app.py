@@ -1094,6 +1094,12 @@ if 'text_copiar' not in st.session_state:
     st.session_state.text_copiar = ""
 if 'titol_playlist' not in st.session_state:
     st.session_state.titol_playlist = "Nova Playlist"
+if 'input_estil' not in st.session_state:
+    st.session_state.input_estil = "Makina"
+if 'genere_aprendre_seleccionat' not in st.session_state:
+    st.session_state.genere_aprendre_seleccionat = "Makina"
+if 'artistes_aprendre_text' not in st.session_state:
+    st.session_state.artistes_aprendre_text = ""
 if 'artistes_processats_feedback' not in st.session_state:
     st.session_state.artistes_processats_feedback = set()
 if 'feedback_timestamp' not in st.session_state:
@@ -1151,13 +1157,13 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 col_gen1, col_gen2 = st.columns([2, 1])
                 with col_gen1:
-                    genere_aprendre = st.text_input("Genere / Estil:", "Makina", key="input_genere_aprendre")
+                    genere_aprendre = st.text_input("Genere / Estil:", value=st.session_state.genere_aprendre_seleccionat, key="input_genere_aprendre")
                 with col_gen2:
                     if tots_generes:
                         genere_seleccionat = st.selectbox("Gèneres guardats:", ["-- Nou --"] + tots_generes, key="sel_genere_guardat")
                         if genere_seleccionat != "-- Nou --":
                             genere_aprendre = genere_seleccionat
-                            st.session_state.input_genere_aprendre = genere_seleccionat
+                            st.session_state.genere_aprendre_seleccionat = genere_seleccionat
 
                 if tots_generes:
                     st.caption(f"📚 Gèneres a la DB: {', '.join(tots_generes)}")
@@ -1191,6 +1197,9 @@ if CLIENT_ID and CLIENT_SECRET:
 
                                 log(f"Guardats {count} artistes a la DB com a \"{genere_aprendre}\"", "success")
                                 st.success(f"✅ {count} artistes guardats a la base de dades com a \"{genere_aprendre}\"!")
+                                # Actualitzem session_state amb els valors actuals
+                                st.session_state.genere_aprendre_seleccionat = genere_aprendre
+                                st.session_state.artistes_aprendre_text = artistes_text
                                 st.balloons()
                             else:
                                 st.warning("No s'han trobat noms d'artistes al text.")
@@ -1260,12 +1269,18 @@ if CLIENT_ID and CLIENT_SECRET:
                                 with cols[j]:
                                     btn_label = f"{icona} {nom.title()}"
                                     if st.button(btn_label, key=f"btn_gen_intel_{idx}", use_container_width=True):
-                                        st.session_state.input_genere_aprendre = nom
+                                        st.session_state.genere_aprendre_seleccionat = nom
                                         # Carreguem els artistes del gènere
                                         artistes_gen = obtenir_artistes_per_genere(nom)
                                         if artistes_gen:
-                                            artistes_text_val = "\n".join([a[0] for a in artistes_gen])
-                                            st.session_state.ta_artistes_aprendre = artistes_text_val
+                                            st.session_state.artistes_aprendre_text = "\n".join([a[0] for a in artistes_gen])
+                                        else:
+                                            # Si no hi ha artistes guardats, posem els seeds del gènere intel·ligent
+                                            info_gen = obtenir_genere_inteligent(nom)
+                                            if info_gen and info_gen[2]:  # seeds
+                                                st.session_state.artistes_aprendre_text = info_gen[2].replace(", ", "\n")
+                                            else:
+                                                st.session_state.artistes_aprendre_text = ""
                                         st.rerun()
                                     # Mostrem els estils com a caption
                                     if estils:
@@ -1297,7 +1312,7 @@ if CLIENT_ID and CLIENT_SECRET:
                                 st.session_state.input_estil = nom
                                 st.rerun()
 
-                estil_triat = st.text_input("Estil / Genere:", "Makina", key="input_estil")
+                estil_triat = st.text_input("Estil / Genere:", value=st.session_state.input_estil, key="input_estil")
                 any_triat = st.text_input("Any / Rang (Ex: 2026, 1990/2005):", "2025/2026", key="input_any")
 
                 tipus_detectat = detectar_tipus_cerca(any_triat)
