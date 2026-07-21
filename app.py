@@ -365,6 +365,61 @@ SEEDS_GENERE = {
     "drum and bass": ["Andy C", "Noisia", "Pendulum", "High Contrast", "Goldie", "Sub Focus"],
 }
 
+
+# Mesos per a la cerca
+MESES = {
+    "gener": 1, "febrer": 2, "març": 3, "abril": 4, "maig": 5, "juny": 6,
+    "juliol": 7, "agost": 8, "setembre": 9, "octubre": 10, "novembre": 11, "desembre": 12
+}
+
+MESES_NOMS = ["Indiferent", "Gener", "Febrer", "Març", "Abril", "Maig", "Juny",
+              "Juliol", "Agost", "Setembre", "Octubre", "Novembre", "Desembre"]
+
+ANYS_DISPONIBLES = ["Indiferent"] + [str(a) for a in range(1950, 2027)]
+
+def parsejar_any_mes(any_input, mes_input):
+    """Converteix els inputs d'any i mes a rangs per la cerca"""
+    any_actual = datetime.now().year
+
+    # Parsejar any
+    if any_input == "Indiferent":
+        any_min = 1950
+        any_max = any_actual
+    elif "/" in any_input:
+        parts = any_input.split("/")
+        try:
+            any_min = int(parts[0].strip())
+            any_max = int(parts[1].strip())
+        except:
+            any_min = any_max = any_actual
+    else:
+        try:
+            any_min = any_max = int(any_input.strip())
+        except:
+            any_min = any_max = any_actual
+
+    # Parsejar mes
+    if mes_input == "Indiferent":
+        return any_min, any_max, None, None  # Sense filtre de mes
+
+    mes_num = None
+    mes_lower = mes_input.lower().strip()
+    if mes_lower in MESES:
+        mes_num = MESES[mes_lower]
+    else:
+        try:
+            mes_num = int(mes_input)
+            if mes_num < 1 or mes_num > 12:
+                mes_num = None
+        except:
+            mes_num = None
+
+    if mes_num:
+        # Si hi ha mes, ajustem els anys per buscar només aquell mes
+        return any_min, any_max, mes_num, mes_num
+
+    return any_min, any_max, None, None
+
 def obtenir_seeds_genere(estil):
     estil_lower = estil.lower().strip()
     for clau, artistes in SEEDS_GENERE.items():
@@ -516,8 +571,12 @@ MODEL_IA = obtenir_model_ia() if GROQ_KEY else None
 # ============================================================
 # 6. DETECTAR TIPUS DE CERCA
 # ============================================================
-def detectar_tipus_cerca(any_triat):
+def detectar_tipus_cerca(any_triat, mes_triat="Indiferent"):
     any_actual = datetime.now().year
+
+    if any_triat == "Indiferent":
+        return "classics"  # Buscar tota la historia
+
     if "/" in any_triat:
         parts = any_triat.split("/")
         try:
@@ -529,6 +588,11 @@ def detectar_tipus_cerca(any_triat):
             any_max = int(any_triat.strip())
         except:
             any_max = any_actual
+
+    # Si hi ha mes especificat, es novetats (busquem recents)
+    if mes_triat != "Indiferent":
+        return "novetats"
+
     if any_max >= any_actual - 1:
         return "novetats"
     else:
@@ -839,6 +903,14 @@ def cercar_spotify(sp, artista_nom, any_triat, limit=20, tipus_cerca="novetats")
             try:
                 any_ll = int(track.get("album", {}).get("release_date", "").split("-")[0])
                 if any_min <= any_ll <= any_max:
+                    # Filtre de mes si esta especificat
+                    if mes_min is not None and mes_max is not None:
+                        try:
+                            mes_ll = int(track.get("album", {}).get("release_date", "").split("-")[1])
+                            if not (mes_min <= mes_ll <= mes_max):
+                                continue
+                        except:
+                            pass
                     track_id = track["id"]
                     track_ids.append(track_id)
                     cancons_temp.append({
@@ -861,6 +933,14 @@ def cercar_spotify(sp, artista_nom, any_triat, limit=20, tipus_cerca="novetats")
                 try:
                     any_ll = int(track.get("album", {}).get("release_date", "").split("-")[0])
                     if any_min <= any_ll <= any_max:
+                        # Filtre de mes si esta especificat
+                        if mes_min is not None and mes_max is not None:
+                            try:
+                                mes_ll = int(track.get("album", {}).get("release_date", "").split("-")[1])
+                                if not (mes_min <= mes_ll <= mes_max):
+                                    continue
+                            except:
+                                pass
                         track_id = track["id"]
                         track_ids.append(track_id)
                         cancons_temp.append({
@@ -893,7 +973,7 @@ def cercar_spotify(sp, artista_nom, any_triat, limit=20, tipus_cerca="novetats")
                 cancons.append(canco)
     return cancons
 
-def cercar_discogs(artista_nom, any_triat, limit=20, tipus_cerca="novetats"):
+def cercar_discogs(artista_nom, any_min, any_max, mes_min=None, mes_max=None, limit=20, tipus_cerca="novetats"):
     cancons = []
     if "/" in any_triat:
         parts = any_triat.split("/")
@@ -934,7 +1014,7 @@ def cercar_discogs(artista_nom, any_triat, limit=20, tipus_cerca="novetats"):
             log(f"Error Discogs {artista_nom}: {e}", "debug")
     return cancons
 
-def cercar_musicbrainz(artista_nom, any_triat, limit=20, tipus_cerca="novetats"):
+def cercar_musicbrainz(artista_nom, any_min, any_max, mes_min=None, mes_max=None, limit=20, tipus_cerca="novetats"):
     cancons = []
     if "/" in any_triat:
         parts = any_triat.split("/")
@@ -981,7 +1061,7 @@ def cercar_musicbrainz(artista_nom, any_triat, limit=20, tipus_cerca="novetats")
         log(f"Error MusicBrainz {artista_nom}: {e}", "debug")
     return cancons
 
-def cercar_deezer(artista_nom, any_triat, limit=20, tipus_cerca="novetats"):
+def cercar_deezer(artista_nom, any_min, any_max, mes_min=None, mes_max=None, limit=20, tipus_cerca="novetats"):
     cancons = []
     if "/" in any_triat:
         parts = any_triat.split("/")
@@ -1005,6 +1085,14 @@ def cercar_deezer(artista_nom, any_triat, limit=20, tipus_cerca="novetats"):
                 try:
                     any_ll = int(track.get("album", {}).get("release_date", "").split("-")[0])
                     if any_min <= any_ll <= any_max:
+                        # Filtre de mes si esta especificat
+                        if mes_min is not None and mes_max is not None:
+                            try:
+                                mes_ll = int(track.get("album", {}).get("release_date", "").split("-")[1])
+                                if not (mes_min <= mes_ll <= mes_max):
+                                    continue
+                            except:
+                                pass
                         canco = {
                             "artista": track["artist"]["name"], "titol": track["title"],
                             "bpm": "N/D", "clau": "N/D", "any": any_ll,
@@ -1164,6 +1252,21 @@ if CLIENT_ID and CLIENT_SECRET:
                 else:
                     nom_act, estils_act, seeds_act, color_act, icona_act = genere_actual, "", "", "#00ff88", "🎵"
                 
+                # Fila amb input + desplegable
+                col_gen1, col_gen2 = st.columns([2, 1])
+                
+                with col_gen1:
+                    genere_aprendre = st.text_input("Genere / Estil:", value=st.session_state.genere_aprendre_seleccionat, key="input_genere_aprendre")
+                
+                with col_gen2:
+                    if tots_generes:
+                        genere_seleccionat = st.selectbox("Guardats:", ["-- Nou --"] + tots_generes, key="sel_genere_guardat")
+                        if genere_seleccionat != "-- Nou --":
+                            genere_aprendre = genere_seleccionat
+                            st.session_state.genere_aprendre_seleccionat = genere_seleccionat
+                    else:
+                        st.caption("Sense generes")
+                
                 # Fila amb input + desplegable + boto dinamic
                 col_gen1, col_gen2, col_gen3 = st.columns([1.5, 1.5, 2])
                 
@@ -1210,8 +1313,12 @@ if CLIENT_ID and CLIENT_SECRET:
                 artistes_text = st.text_area(
                     "Llista d'artistes (un per linia):",
                     height=300,
-                    placeholder="Exemple:\nPastis & Buenri\nXavi Metralla\nSkudero\nDany BPM\nDj Pildo\nDj Freddy\nRuboy\nDavix\nDj Duro\nTony Phobia\nDj Motor\nV-STOR\nRaul Lokura\nDani Weiko\nAleks & Could\nJuanito Hard\nXarly & Moussa Beat\nHalox\nDj Larka\nDj Napo\nGerard Fortuny Jr\nSuttlek\nDj Skull\nToni Poky\nK-Bert\nKaru Uptime\nSizing\nTunneT\nDj TT-Destroy",
+                artistes_text = st.text_area(
+                    "Llista d'artistes (un per linia):",
+                    value=st.session_state.artistes_aprendre_text,
+                    height=300,
                     key="ta_artistes_aprendre"
+                )
                 )
 
                 col_btn1, col_btn2, col_btn3 = st.columns(3)
@@ -1314,7 +1421,17 @@ if CLIENT_ID and CLIENT_SECRET:
                             estil_triat = genere_cercar_sel
                 else:
                     estil_triat = st.text_input("Estil / Genere:", value=st.session_state.input_estil, key="input_estil")
-                any_triat = st.text_input("Any / Rang (Ex: 2026, 1990/2005):", "2025/2026", key="input_any")
+
+                # Selectors de mes i any
+                col_mes, col_any = st.columns(2)
+                with col_mes:
+                    mes_triat = st.selectbox("Mes:", MESES_NOMS, index=0, key="sel_mes")
+                with col_any:
+                    any_triat = st.selectbox("Any:", ANYS_DISPONIBLES, index=len(ANYS_DISPONIBLES)-2, key="sel_any")
+                    # Opcio de rang manual
+                    any_manual = st.text_input("O rang (Ex: 2025/2026):", "", key="input_any_manual", help="Deixa en blanc per usar el selector d'any")
+                    if any_manual.strip():
+                        any_triat = any_manual.strip()
 
                 tipus_detectat = detectar_tipus_cerca(any_triat)
                 if tipus_detectat == "novetats":
@@ -1368,7 +1485,13 @@ if CLIENT_ID and CLIENT_SECRET:
                 if btn_rastreig:
                     log(f"Rastreig: {estil_triat} | {any_triat} | {quantitat} cancons", "info")
 
-                    tipus_cerca = detectar_tipus_cerca(any_triat)
+                    # Parsejem any i mes
+                    if any_triat == "Indiferent":
+                        any_min_r, any_max_r, mes_min_r, mes_max_r = parsejar_any_mes("Indiferent", mes_triat)
+                    else:
+                        any_min_r, any_max_r, mes_min_r, mes_max_r = parsejar_any_mes(any_triat, mes_triat)
+
+                    tipus_cerca = detectar_tipus_cerca(any_triat, mes_triat)
                     log(f"Mode detectat: {tipus_cerca.upper()}", "info")
 
                     artistes_passada1 = trobar_artistes_passada1(estil_triat, any_triat)
