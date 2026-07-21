@@ -1152,21 +1152,60 @@ if CLIENT_ID and CLIENT_SECRET:
             col_a1, col_a2 = st.columns([2, 1])
 
             with col_a1:
-                # Selector de gènere amb opcions guardades
+                # Selector de genere amb opcions guardades + boto dinamic
                 tots_generes = obtenir_tots_generes_db()
-
-                col_gen1, col_gen2 = st.columns([2, 1])
+                generes_inteligents_list = obtenir_generes_inteligents()
+                
+                # Detectem el genere actual per mostrar el boto correcte
+                genere_actual = st.session_state.genere_aprendre_seleccionat
+                info_actual = obtenir_genere_inteligent(genere_actual)
+                if info_actual:
+                    nom_act, estils_act, seeds_act, color_act, icona_act = info_actual
+                else:
+                    nom_act, estils_act, seeds_act, color_act, icona_act = genere_actual, "", "", "#00ff88", "🎵"
+                
+                # Fila amb input + desplegable + boto dinamic
+                col_gen1, col_gen2, col_gen3 = st.columns([1.5, 1.5, 2])
+                
                 with col_gen1:
                     genere_aprendre = st.text_input("Genere / Estil:", value=st.session_state.genere_aprendre_seleccionat, key="input_genere_aprendre")
+                
                 with col_gen2:
                     if tots_generes:
-                        genere_seleccionat = st.selectbox("Gèneres guardats:", ["-- Nou --"] + tots_generes, key="sel_genere_guardat")
+                        genere_seleccionat = st.selectbox("Guardats:", ["-- Nou --"] + tots_generes, key="sel_genere_guardat")
                         if genere_seleccionat != "-- Nou --":
                             genere_aprendre = genere_seleccionat
                             st.session_state.genere_aprendre_seleccionat = genere_seleccionat
-
+                    else:
+                        st.caption("Sense generes")
+                
+                with col_gen3:
+                    # Boto dinamic que canvia segons el genere seleccionat
+                    btn_label = f"{icona_act} {genere_actual.title()}"
+                    st.markdown(f"""
+                    <style>
+                    div[data-testid="stVerticalBlock"] div[data-testid="stHorizontalBlock"] div:nth-child(3) button[kind="secondary"] {{
+                        background-color: {color_act}22 !important;
+                        border: 2px solid {color_act} !important;
+                        color: {color_act} !important;
+                        font-weight: bold !important;
+                    }}
+                    </style>
+                    """, unsafe_allow_html=True)
+                    if st.button(btn_label, key="btn_genere_dynamic", use_container_width=True):
+                        # Carreguem els artistes del genere actual
+                        artistes_gen = obtenir_artistes_per_genere(genere_actual)
+                        if artistes_gen:
+                            st.session_state.artistes_aprendre_text = "\n".join([a[0] for a in artistes_gen])
+                        else:
+                            if info_actual and info_actual[2]:
+                                st.session_state.artistes_aprendre_text = info_actual[2].replace(", ", "\n")
+                            else:
+                                st.session_state.artistes_aprendre_text = ""
+                        st.rerun()
+                
                 if tots_generes:
-                    st.caption(f"📚 Gèneres a la DB: {', '.join(tots_generes)}")
+                    st.caption(f"📚 Generes a la DB: {', '.join(tots_generes)}")
 
                 artistes_text = st.text_area(
                     "Llista d'artistes (un per linia):",
