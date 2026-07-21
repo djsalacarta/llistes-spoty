@@ -89,7 +89,7 @@ def consultar_artistes_db(genere, min_confiança="probable"):
     cursor.execute('''
         SELECT nom, subgenere, confiança, cerca_count 
         FROM artistes_confirmats 
-        WHERE genere = ? 
+        WHERE LOWER(genere) = LOWER(?) 
         ORDER BY 
             CASE confiança WHEN 'segur' THEN 1 WHEN 'probable' THEN 2 ELSE 3 END,
             cerca_count DESC
@@ -108,7 +108,7 @@ def consultar_artistes_db(genere, min_confiança="probable"):
 def consultar_rebutjats_db(genere):
     conn = db_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT nom FROM artistes_rebutjats WHERE genere = ?", (genere,))
+    cursor.execute("SELECT nom FROM artistes_rebutjats WHERE LOWER(genere) = LOWER(?)", (genere,))
     resultats = {r[0] for r in cursor.fetchall()}
     conn.close()
     return resultats
@@ -116,6 +116,7 @@ def consultar_rebutjats_db(genere):
 def guardar_artista_confirmat(nom, genere, subgenere=None, font="IA", confiança="probable"):
     conn = db_conn()
     cursor = conn.cursor()
+    genere_norm = genere.strip().lower()
     cursor.execute('''
         INSERT INTO artistes_confirmats (nom, genere, subgenere, font, confiança, cerca_count)
         VALUES (?, ?, ?, ?, ?, 1)
@@ -123,17 +124,18 @@ def guardar_artista_confirmat(nom, genere, subgenere=None, font="IA", confiança
             cerca_count = cerca_count + 1,
             confiança = CASE WHEN excluded.confiança = 'segur' THEN 'segur' ELSE artistes_confirmats.confiança END,
             data_afegit = CURRENT_TIMESTAMP
-    ''', (nom, genere, subgenere, font, confiança))
+    ''', (nom, genere_norm, subgenere, font, confiança))
     conn.commit()
     conn.close()
 
 def guardar_artista_rebutjat(nom, genere, motiu="No es del genere"):
     conn = db_conn()
     cursor = conn.cursor()
+    genere_norm = genere.strip().lower()
     cursor.execute('''
         INSERT OR IGNORE INTO artistes_rebutjats (nom, genere, motiu)
         VALUES (?, ?, ?)
-    ''', (nom, genere, motiu))
+    ''', (nom, genere_norm, motiu))
     conn.commit()
     conn.close()
 
@@ -275,7 +277,7 @@ def render_console():
     init_console()
     html = st.session_state.console_html or '<div style="color: #666; font-family: monospace; padding: 20px; text-align: center;">⏳ Esperant operacions...</div>'
     st.markdown(f"""
-    <div style="background: #0a0a0a; border: 2px solid #333; border-radius: 8px; padding: 10px; height: 120px; overflow-y: auto; font-family: Courier New, monospace; box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);">
+    <div style="background: #0a0a0a; border: 2px solid #333; border-radius: 8px; padding: 10px; height: 120px; overflow-y: auto; font-family: Courier New, monospace; box-shadow: 0 0 20px rgba(0, 255, 136, 0.1); width: 100%; box-sizing: border-box;">
         <div style="position: sticky; top: 0; background: #1a1a1a; padding: 5px 10px; border-bottom: 1px solid #333; margin-bottom: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
             <span style="color: #00ff88; font-weight: bold; font-size: 12px;">🖥️ CONSOLA</span>
             <span style="color: #888; font-size: 11px;">{len(st.session_state.console_logs)} registres</span>
@@ -954,7 +956,7 @@ if CLIENT_ID and CLIENT_SECRET:
             st.info(f"Discogs: {'Actiu' if DISCOGS_TOKEN else 'Sense token'}")
 
         # ===== PESTANYES =====
-        tab_aprendre, tab_cercar = st.tabs(["🎓 Aprendre", "🔍 Cercar Cançons"])
+        tab_cercar, tab_aprendre = st.tabs(["🔍 Cercar Cançons", "🎓 Aprendre"])
 
         # ========================================================
         # PESTANYA 1: APRENDRE
@@ -1055,7 +1057,7 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 col_opt1, col_opt2 = st.columns(2)
                 with col_opt1:
-                    max_per_artista = st.number_input("Max per artista:", min_value=1, max_value=10, value=3, step=1, key="input_max_artista")
+                    max_per_artista = st.number_input("Max per artista:", min_value=1, max_value=15, value=5, step=1, key="input_max_artista")
                 with col_opt2:
                     ordenacio = st.selectbox("Ordenar per:", ["popularitat", "bpm", "any", "aleatori"], index=0, key="sel_ordenacio")
                     min_conf = st.selectbox("Min confiança DB:", ["segur", "probable", "dubtos"], index=1, key="sel_conf")
