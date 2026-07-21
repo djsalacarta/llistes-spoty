@@ -66,6 +66,17 @@ def init_db():
     )
     ''')
     cursor.execute('''
+    CREATE TABLE IF NOT EXISTS generes_inteligents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nom_genere TEXT NOT NULL UNIQUE,
+        estils TEXT DEFAULT '',
+        seeds TEXT DEFAULT '',
+        color TEXT DEFAULT '#00ff88',
+        icona TEXT DEFAULT '🎵',
+        data_creat TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS generes_apresos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nom_genere TEXT NOT NULL UNIQUE,
@@ -75,6 +86,17 @@ def init_db():
         total_artistes INTEGER DEFAULT 0,
         total_cancons INTEGER DEFAULT 0,
         ultima_actualitzacio TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS generes_inteligents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nom_genere TEXT NOT NULL UNIQUE,
+        estils TEXT DEFAULT '',
+        seeds TEXT DEFAULT '',
+        color TEXT DEFAULT '#00ff88',
+        icona TEXT DEFAULT '🎵',
+        data_creat TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
     conn.commit()
@@ -89,7 +111,7 @@ def consultar_artistes_db(genere, min_confiança="probable"):
     cursor.execute('''
         SELECT nom, subgenere, confiança, cerca_count 
         FROM artistes_confirmats 
-        WHERE genere = ? 
+        WHERE LOWER(genere) = LOWER(?) 
         ORDER BY 
             CASE confiança WHEN 'segur' THEN 1 WHEN 'probable' THEN 2 ELSE 3 END,
             cerca_count DESC
@@ -108,7 +130,7 @@ def consultar_artistes_db(genere, min_confiança="probable"):
 def consultar_rebutjats_db(genere):
     conn = db_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT nom FROM artistes_rebutjats WHERE genere = ?", (genere,))
+    cursor.execute("SELECT nom FROM artistes_rebutjats WHERE LOWER(genere) = LOWER(?)", (genere,))
     resultats = {r[0] for r in cursor.fetchall()}
     conn.close()
     return resultats
@@ -185,7 +207,151 @@ def obtenir_estadistiques_db():
         "top_generes": top_generes
     }
 
+def obtenir_tots_generes_db():
+    """Obté tots els gèneres únics guardats a la DB (case-insensitive)"""
+    conn = db_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT LOWER(nom_genere) as genere_lower, nom_genere FROM generes_apresos ORDER BY nom_genere")
+    generes = cursor.fetchall()
+    cursor.execute("SELECT DISTINCT LOWER(genere) as genere_lower, genere FROM artistes_confirmats ORDER BY genere")
+    artistes_generes = cursor.fetchall()
+    conn.close()
+
+    # Combinem i eliminem duplicats
+    tots = {}
+    for g_lower, g_original in generes:
+        tots[g_lower] = g_original
+    for g_lower, g_original in artistes_generes:
+        if g_lower not in tots:
+            tots[g_lower] = g_original
+
+    return sorted(tots.values(), key=str.lower)
+
+def obtenir_artistes_per_genere(genere):
+    """Obté tots els artistes d'un gènere (case-insensitive)"""
+    conn = db_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT nom, subgenere, confiança, cerca_count FROM artistes_confirmats WHERE LOWER(genere) = LOWER(?) ORDER BY nom", (genere,))
+    resultats = cursor.fetchall()
+    conn.close()
+    return resultats
+
+
 init_db()
+
+# ============================================================
+# FUNCIONS INTEL·LIGENTS PER GÈNERES
+# ============================================================
+def guardar_genere_inteligent(nom_genere, estils="", seeds="", color="#00ff88", icona="🎵"):
+    """Guarda un genere amb els seus estils i seeds a la DB intel·ligent"""
+    conn = db_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO generes_inteligents (nom_genere, estils, seeds, color, icona)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(nom_genere) DO UPDATE SET
+            estils = excluded.estils,
+            seeds = excluded.seeds,
+            color = excluded.color,
+            icona = excluded.icona
+    """, (nom_genere.lower().strip(), estils, seeds, color, icona))
+    conn.commit()
+    conn.close()
+
+def obtenir_generes_inteligents():
+    """Obté tots els gèneres intel·ligents guardats"""
+    conn = db_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT nom_genere, estils, seeds, color, icona FROM generes_inteligents ORDER BY nom_genere")
+    resultats = cursor.fetchall()
+    conn.close()
+    return resultats
+
+def obtenir_genere_inteligent(nom_genere):
+    """Obté un gènere intel·ligent per nom"""
+    conn = db_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT nom_genere, estils, seeds, color, icona FROM generes_inteligents WHERE LOWER(nom_genere) = LOWER(?)", (nom_genere,))
+    resultat = cursor.fetchone()
+    conn.close()
+    return resultat
+
+def esborrar_genere_inteligent(nom_genere):
+    """Esborra un gènere intel·ligent"""
+    conn = db_conn()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM generes_inteligents WHERE LOWER(nom_genere) = LOWER(?)", (nom_genere,))
+    conn.commit()
+    conn.close()
+
+# Diccionari de colors i icones per gènere
+ESTILS_PREDEFINITS = {
+    "makina": {"estils": "Makina, Hardcore espanyol, Pont Aeri, Xque", "seeds": "Pont Aeri, Pastis & Buenri, Ruboy, Xavi Metralla, Javi Boss, Skudero, DJ Nau, Xque, Sissu, Chimo Bayo", "color": "#ff0066", "icona": "🔥"},
+    "mákina": {"estils": "Makina, Hardcore espanyol, Pont Aeri, Xque", "seeds": "Pont Aeri, Pastis & Buenri, Ruboy, Xavi Metralla, Javi Boss, Skudero, DJ Nau, Xque, Sissu, Chimo Bayo", "color": "#ff0066", "icona": "🔥"},
+    "techno": {"estils": "Techno, Detroit Techno, Minimal Techno, Industrial Techno, Acid Techno", "seeds": "Adam Beyer, Charlotte de Witte, Amelie Lens, Nina Kraviz, Carl Cox, Jeff Mills, Robert Hood, Ben Klock", "color": "#00d4ff", "icona": "🌀"},
+    "hardcore": {"estils": "Hardcore, Gabber, Frenchcore, Happy Hardcore, UK Hardcore", "seeds": "Neophyte, Korsakoff, Rotterdam Terror Corps, DJ Paul, The Stunned Guys, Tommyknocker, Mad Dog", "color": "#ff3300", "icona": "💀"},
+    "house": {"estils": "House, Deep House, Tech House, Progressive House, Electro House", "seeds": "David Guetta, Calvin Harris, Swedish House Mafia, Disclosure, Duke Dumont, MK, Fisher", "color": "#ffcc00", "icona": "🏠"},
+    "trance": {"estils": "Trance, Psytrance, Uplifting Trance, Tech Trance, Vocal Trance", "seeds": "Armin van Buuren, Tiësto, Above & Beyond, Paul van Dyk, Ferry Corsten, Aly & Fila, Vini Vici", "color": "#cc66ff", "icona": "✨"},
+    "drum and bass": {"estils": "Drum and Bass, Liquid DnB, Neurofunk, Jump Up, Jungle", "seeds": "Andy C, Noisia, Pendulum, High Contrast, Goldie, Sub Focus, Chase & Status", "color": "#ff6600", "icona": "🥁"},
+    "dubstep": {"estils": "Dubstep, Brostep, Riddim, Melodic Dubstep, Tearout", "seeds": "Skrillex, Excision, Zeds Dead, Virtual Riot, Marauda, Subtronics", "color": "#9900ff", "icona": "⚡"},
+    "edm": {"estils": "EDM, Big Room, Future Bass, Trap, Electro House", "seeds": "Martin Garrix, Hardwell, Dimitri Vegas & Like Mike, Steve Aoki, Tiësto, David Guetta", "color": "#ff0099", "icona": "🎉"},
+}
+
+def detectar_estils_genere(nom_genere):
+    """Detecta els estils i seeds d'un gènere, usant predefinits o IA"""
+    nom_lower = nom_genere.lower().strip()
+
+    # Primer mirem si tenim predefinits
+    for clau, info in ESTILS_PREDEFINITS.items():
+        if clau in nom_lower or nom_lower in clau:
+            return info
+
+    # Si no, usem la IA per generar estils
+    if GROQ_KEY and GROQ_URL:
+        try:
+            headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+            prompt = f"""Ets un expert musical. Per al gènere "{nom_genere}", dona'm:
+1. 5 subgèneres/estils relacionats (separats per comes)
+2. 10 artistes representatius (separats per comes)
+3. Un color hex (#RRGGBB) que representi aquest gènere
+4. Una icona emoji que el representi
+
+FORMAT OBLIGATORI (una línia per camp):
+ESTILS: subgenere1, subgenere2, subgenere3, subgenere4, subgenere5
+SEEDS: artista1, artista2, artista3, artista4, artista5, artista6, artista7, artista8, artista9, artista10
+COLOR: #RRGGBB
+ICONA: emoji"""
+
+            data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 500}
+            res = requests.post(GROQ_URL, headers=headers, json=data, timeout=15)
+
+            if res.status_code == 200:
+                resposta = res.json()["choices"][0]["message"]["content"].strip()
+                estils = ""
+                seeds = ""
+                color = "#00ff88"
+                icona = "🎵"
+
+                for linia in resposta.splitlines():
+                    linia = linia.strip()
+                    if linia.startswith("ESTILS:"):
+                        estils = linia.replace("ESTILS:", "").strip()
+                    elif linia.startswith("SEEDS:"):
+                        seeds = linia.replace("SEEDS:", "").strip()
+                    elif linia.startswith("COLOR:"):
+                        color = linia.replace("COLOR:", "").strip()
+                        if not color.startswith("#") or len(color) != 7:
+                            color = "#00ff88"
+                    elif linia.startswith("ICONA:"):
+                        icona = linia.replace("ICONA:", "").strip()
+
+                return {"estils": estils, "seeds": seeds, "color": color, "icona": icona}
+        except Exception as e:
+            log(f"Error detectant estils per {nom_genere}: {e}", "error")
+
+    # Fallback
+    return {"estils": nom_genere, "seeds": "", "color": "#00ff88", "icona": "🎵"}
+
 
 LLISTA_NEGRA = ["tuyo", "rimsky-korsakov", "mussorgsky", "modest mussorgsky", "nikolai rimsky-korsakov"]
 
@@ -210,7 +376,7 @@ def parsejar_llista_artistes(text_artistes):
     if not text_artistes or not text_artistes.strip():
         return []
     artistes = []
-    for linia in text_artistes.split("\n"):
+    for linia in text_artistes.splitlines():
         linia = linia.strip()
         if not linia:
             continue
@@ -448,7 +614,7 @@ Despres de revisar la llista... (frase massa llarga, PROHIBIT)"""
                 return []
 
             artistes = []
-            for linia in resposta.split("\n"):
+            for linia in resposta.splitlines():
                 linia = linia.strip()
                 if not linia or len(linia) > 60:
                     continue
@@ -542,7 +708,7 @@ Despres de revisar la llista... (frase explicativa, PROHIBIT)
                 return [(nom, gen, "probable") for nom, gen in artistes]
 
             artistes_validats = []
-            for linia in resposta.split("\n"):
+            for linia in resposta.splitlines():
                 linia = linia.strip()
                 if not linia or len(linia) > 60:
                     continue
@@ -980,7 +1146,21 @@ if CLIENT_ID and CLIENT_SECRET:
             col_a1, col_a2 = st.columns([2, 1])
 
             with col_a1:
-                genere_aprendre = st.text_input("Genere / Estil:", "Makina", key="input_genere_aprendre")
+                # Selector de gènere amb opcions guardades
+                tots_generes = obtenir_tots_generes_db()
+
+                col_gen1, col_gen2 = st.columns([2, 1])
+                with col_gen1:
+                    genere_aprendre = st.text_input("Genere / Estil:", "Makina", key="input_genere_aprendre")
+                with col_gen2:
+                    if tots_generes:
+                        genere_seleccionat = st.selectbox("Gèneres guardats:", ["-- Nou --"] + tots_generes, key="sel_genere_guardat")
+                        if genere_seleccionat != "-- Nou --":
+                            genere_aprendre = genere_seleccionat
+                            st.session_state.input_genere_aprendre = genere_seleccionat
+
+                if tots_generes:
+                    st.caption(f"📚 Gèneres a la DB: {', '.join(tots_generes)}")
 
                 artistes_text = st.text_area(
                     "Llista d'artistes (un per linia):",
@@ -997,6 +1177,18 @@ if CLIENT_ID and CLIENT_SECRET:
                             artistes_parsed = parsejar_llista_artistes(artistes_text)
                             if artistes_parsed:
                                 count = guardar_llista_artistes_confirmats(artistes_parsed, genere_aprendre)
+
+                                # Guardem també el gènere intel·ligent
+                                info_genere = detectar_estils_genere(genere_aprendre)
+                                seeds_text = ", ".join(artistes_parsed[:15]) if artistes_parsed else info_genere["seeds"]
+                                guardar_genere_inteligent(
+                                    genere_aprendre, 
+                                    estils=info_genere["estils"],
+                                    seeds=seeds_text,
+                                    color=info_genere["color"],
+                                    icona=info_genere["icona"]
+                                )
+
                                 log(f"Guardats {count} artistes a la DB com a \"{genere_aprendre}\"", "success")
                                 st.success(f"✅ {count} artistes guardats a la base de dades com a \"{genere_aprendre}\"!")
                                 st.balloons()
@@ -1013,13 +1205,22 @@ if CLIENT_ID and CLIENT_SECRET:
                         else:
                             st.info(f"No hi ha artistes a la DB per \"{genere_aprendre}\" encara.")
 
+                        # Mostrem també tots els gèneres disponibles
+                        tots_g = obtenir_tots_generes_db()
+                        if tots_g:
+                            st.markdown("**📚 Tots els gèneres guardats:**")
+                            for g in tots_g:
+                                count = len(obtenir_artistes_per_genere(g))
+                                st.write(f"• **{g}**: {count} artistes")
+
                 with col_btn3:
                     if st.button("🗑️ Esborrar Genere", key="btn_esborrar_aprendre", use_container_width=True):
                         conn = db_conn()
                         cursor = conn.cursor()
-                        cursor.execute("DELETE FROM artistes_confirmats WHERE genere = ?", (genere_aprendre,))
-                        cursor.execute("DELETE FROM artistes_rebutjats WHERE genere = ?", (genere_aprendre,))
-                        cursor.execute("DELETE FROM cancons_confirmades WHERE genere = ?", (genere_aprendre,))
+                        cursor.execute("DELETE FROM artistes_confirmats WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
+                        cursor.execute("DELETE FROM artistes_rebutjats WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
+                        cursor.execute("DELETE FROM cancons_confirmades WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
+                        cursor.execute("DELETE FROM generes_apresos WHERE LOWER(nom_genere) = LOWER(?)", (genere_aprendre,))
                         conn.commit()
                         conn.close()
                         log(f"Genere \"{genere_aprendre}\" esborrat de la DB", "warning")
@@ -1038,6 +1239,40 @@ if CLIENT_ID and CLIENT_SECRET:
                     for gen, nart, ncan in stats["top_generes"]:
                         st.write(f"• **{gen}**: {nart} artistes, {ncan} cancons")
 
+                # ===== BOTONS INTEL·LIGENTS PER GÈNERE =====
+                st.markdown("<div style='margin-top: 25px;'></div>", unsafe_allow_html=True)
+                st.markdown("""
+                <div style="background: #1a1a2e; padding: 10px 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #ff0066;">
+                    <span style="color: #ff0066; font-weight: bold; font-size: 16px;">🧠 Gèneres Intel·ligents</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                generes_inteligents = obtenir_generes_inteligents()
+                if generes_inteligents:
+                    st.caption("Clica un gènere per carregar els seus artistes i estils:")
+                    cols_per_fila = 2
+                    for i in range(0, len(generes_inteligents), cols_per_fila):
+                        cols = st.columns(cols_per_fila)
+                        for j in range(cols_per_fila):
+                            idx = i + j
+                            if idx < len(generes_inteligents):
+                                nom, estils, seeds, color, icona = generes_inteligents[idx]
+                                with cols[j]:
+                                    btn_label = f"{icona} {nom.title()}"
+                                    if st.button(btn_label, key=f"btn_gen_intel_{idx}", use_container_width=True):
+                                        st.session_state.input_genere_aprendre = nom
+                                        # Carreguem els artistes del gènere
+                                        artistes_gen = obtenir_artistes_per_genere(nom)
+                                        if artistes_gen:
+                                            artistes_text_val = "\n".join([a[0] for a in artistes_gen])
+                                            st.session_state.ta_artistes_aprendre = artistes_text_val
+                                        st.rerun()
+                                    # Mostrem els estils com a caption
+                                    if estils:
+                                        st.caption(f"🎵 {estils}")
+                else:
+                    st.info("📝 Guarda el primer gènere per veure els botons intel·ligents aquí!")
+
         # ========================================================
         # PESTANYA 2: CERCAR CANÇONS
         # ========================================================
@@ -1050,6 +1285,17 @@ if CLIENT_ID and CLIENT_SECRET:
                     <span style="color: #00ff88; font-weight: bold; font-size: 16px;">🔍 Controls de Cerca</span>
                 </div>
                 """, unsafe_allow_html=True)
+
+                # Botons ràpids de gènere
+                generes_rapids = obtenir_generes_inteligents()
+                if generes_rapids:
+                    st.markdown("<span style='color: #888; font-size: 12px;'>🧠 Gèneres ràpids:</span>", unsafe_allow_html=True)
+                    cols_rapids = st.columns(min(len(generes_rapids), 4))
+                    for idx, (nom, estils, seeds, color, icona) in enumerate(generes_rapids[:4]):
+                        with cols_rapids[idx]:
+                            if st.button(f"{icona} {nom.title()}", key=f"btn_rapid_{idx}", use_container_width=True):
+                                st.session_state.input_estil = nom
+                                st.rerun()
 
                 estil_triat = st.text_input("Estil / Genere:", "Makina", key="input_estil")
                 any_triat = st.text_input("Any / Rang (Ex: 2026, 1990/2005):", "2025/2026", key="input_any")
