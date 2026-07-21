@@ -417,7 +417,7 @@ REGLAS ESTRICTES:
 4. NO escriguis numeros de llista (1., 2., etc).
 5. NO escriguis mes de 5 paraules per nom d'artista.
 6. Si no coneixes artistes d'aquest estil, respon: SENSE_RESULTATS
-7. Maxim 25 artistes.
+7. Maxim 50 artistes.
 
 Exemples VALIDES:
 Pont Aeri | hardcore
@@ -429,7 +429,7 @@ Els artistes que he trobat son: (text explicatiu, PROHIBIT)
 1. Pont Aeri (te numeros, PROHIBIT)
 Despres de revisar la llista... (frase massa llarga, PROHIBIT)"""
 
-    data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 1500}
+    data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 2500}
 
     try:
         log(f"IA: Passada 1 - Mode {tipus_cerca.upper()}...", "info")
@@ -529,7 +529,7 @@ Exemples INVALIDES (NO facis aixo):
 Despres de revisar la llista... (frase explicativa, PROHIBIT)
 1. Pont Aeri | hardcore | segur (te numeros, PROHIBIT)"""
 
-    data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 1500}
+    data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 2500}
 
     try:
         log("IA: Passada 2 - Validant artistes...", "info")
@@ -854,6 +854,80 @@ def cercar_deezer(artista_nom, any_triat, limit=20, tipus_cerca="novetats"):
         log(f"Error Deezer {artista_nom}: {e}", "debug")
     return cancons
 
+def obtenir_artistes_relacionats_spotify(sp, artista_nom, limit=10):
+    """Obté artistes relacionats de Spotify per descobrir nous artistes."""
+    artistes_relacionats = []
+    try:
+        # Primer busquem l'ID de l'artista
+        resultats = sp.search(q=f'artist:"{artista_nom}"', type="artist", limit=1)
+        items = resultats.get("artists", {}).get("items", [])
+        if items:
+            artista_id = items[0]["id"]
+            related = sp.artist_related_artists(artista_id)
+            for art in related.get("artists", [])[:limit]:
+                artistes_relacionats.append(art["name"])
+                log(f"Artista relacionat trobat: {art['name']}", "debug")
+    except Exception as e:
+        log(f"Error artistes relacionats {artista_nom}: {e}", "debug")
+    return artistes_relacionats
+
+def cercar_per_genere_spotify(sp, genere, any_triat, limit=50):
+    """Cerca cançons directament per gènere (no per artista) per trobar emergents."""
+    cancons = []
+    if "/" in any_triat:
+        parts = any_triat.split("/")
+        try:
+            any_min = int(parts[0].strip())
+            any_max = int(parts[1].strip())
+        except:
+            any_min = any_max = 2025
+    else:
+        try:
+            any_min = any_max = int(any_triat)
+        except:
+            any_min = any_max = 2025
+
+    try:
+        # Cerca per gènere + any
+        query = f'genre:{genere} year:{any_min}-{any_max}'
+        resultats = sp.search(q=query, type="track", limit=limit)
+        track_ids = []
+        cancons_temp = []
+        for track in resultats.get("tracks", {}).get("items", []):
+            try:
+                any_ll = int(track.get("album", {}).get("release_date", "").split("-")[0])
+                if any_min <= any_ll <= any_max:
+                    track_id = track["id"]
+                    track_ids.append(track_id)
+                    cancons_temp.append({
+                        "artista": track["artists"][0]["name"],
+                        "titol": track["name"],
+                        "bpm": "N/D", "clau": "N/D", "any": any_ll,
+                        "popularitat": track.get("popularity", 0),
+                        "durada_ms": track.get("duration_ms", 0),
+                        "spotify_uri": track["uri"],
+                        "spotify_link": track["external_urls"]["spotify"],
+                        "spotify_id": track_id,
+                        "font": "Spotify (Gènere)"
+                    })
+            except:
+                pass
+
+        if track_ids:
+            features = obtenir_audio_features(sp, track_ids)
+            for canco in cancons_temp:
+                tid = canco.get("spotify_id")
+                if tid and tid in features:
+                    f = features[tid]
+                    canco["bpm"] = f["bpm"] if f["bpm"] else "N/D"
+                    canco["clau"] = key_to_string(f["key"], f["mode"])
+                cancons.append(canco)
+
+        log(f"Cerca per gènere '{genere}': {len(cancons)} cançons trobades", "success")
+    except Exception as e:
+        log(f"Error cerca per gènere: {e}", "error")
+    return cancons
+
 # ============================================================
 # 10. UTILITATS AVANÇADES
 # ============================================================
@@ -861,7 +935,13 @@ def eliminar_duplicats(cancons):
     vistes = set()
     uniques = []
     for c in cancons:
-        clau = f"{c['artista'].lower().strip()}|{c['titol'].lower().strip()}"
+        # Normalitzem el títol per detectar remixes/versions del mateix tema
+        titol_norm = c['titol'].lower().strip()
+        # Eliminem sufixos comuns de remixes/versions
+        for suffix in [' - ', ' (', '[', ' remix', ' edit', ' version', ' mix', ' radio', ' extended', ' original']:
+            if suffix in titol_norm:
+                titol_norm = titol_norm.split(suffix)[0]
+        clau = f"{c['artista'].lower().strip()}|{titol_norm}"
         if clau not in vistes:
             vistes.add(clau)
             uniques.append(c)
@@ -1055,7 +1135,7 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 col_opt1, col_opt2 = st.columns(2)
                 with col_opt1:
-                    max_per_artista = st.number_input("Max per artista:", min_value=1, max_value=10, value=3, step=1, key="input_max_artista")
+                    max_per_artista = st.number_input("Max per artista:", min_value=1, max_value=15, value=5, step=1, key="input_max_artista")
                     validar_genere = st.checkbox("Validar genere", value=True, key="chk_validar")
                 with col_opt2:
                     ordenacio = st.selectbox("Ordenar per:", ["popularitat", "bpm", "any", "aleatori"], index=0, key="sel_ordenacio")
@@ -1104,6 +1184,8 @@ if CLIENT_ID and CLIENT_SECRET:
 
                             totes_cancons = []
 
+                            # FASE 1: Cercar per artistes trobats per IA
+                            artistes_relacionats_trobats = set()
                             for artista_nom, artista_genere, confiança in artistes_validats:
                                 if not validar_artista_seguretat(artista_nom):
                                     log(f"Artista descartat (llista negra): {artista_nom}", "warning")
@@ -1111,7 +1193,7 @@ if CLIENT_ID and CLIENT_SECRET:
 
                                 log(f"Cercant: {artista_nom} ({artista_genere}) [{confiança}]...", "info")
 
-                                cancons_spotify = cercar_spotify(sp, artista_nom, any_triat, limit=10, tipus_cerca=tipus_cerca)
+                                cancons_spotify = cercar_spotify(sp, artista_nom, any_triat, limit=15, tipus_cerca=tipus_cerca)
                                 cancons_discogs = cercar_discogs(artista_nom, any_triat, limit=10, tipus_cerca=tipus_cerca)
                                 cancons_mb = cercar_musicbrainz(artista_nom, any_triat, limit=10, tipus_cerca=tipus_cerca)
                                 cancons_deezer = cercar_deezer(artista_nom, any_triat, limit=10, tipus_cerca=tipus_cerca)
@@ -1124,6 +1206,26 @@ if CLIENT_ID and CLIENT_SECRET:
                                 totes_cancons.extend(cancons_discogs)
                                 totes_cancons.extend(cancons_mb)
                                 totes_cancons.extend(cancons_deezer)
+
+                                # FASE 1.5: Cercar artistes relacionats (màxim 3 per artista seed)
+                                if confiança == "segur" or confiança == "probable":
+                                    relacionats = obtenir_artistes_relacionats_spotify(sp, artista_nom, limit=3)
+                                    for rel in relacionats:
+                                        if rel.lower() not in artistes_relacionats_trobats:
+                                            artistes_relacionats_trobats.add(rel.lower())
+                                            log(f"Cercant artista relacionat: {rel}...", "info")
+                                            cancons_rel = cercar_spotify(sp, rel, any_triat, limit=8, tipus_cerca=tipus_cerca)
+                                            if cancons_rel:
+                                                log(f"{rel}: {len(cancons_rel)} cancons trobades (relacionat)", "success")
+                                                totes_cancons.extend(cancons_rel)
+
+                            # FASE 2: Si encara no tenim prou cançons, cercar per gènere directament
+                            if len(totes_cancons) < quantitat * 2:
+                                log(f"Pocs resultats ({len(totes_cancons)}), cercant per gènere '{estil_triat}'...", "warning")
+                                cancons_genere = cercar_per_genere_spotify(sp, estil_triat, any_triat, limit=50)
+                                if cancons_genere:
+                                    log(f"Cerca per gènere: {len(cancons_genere)} cançons addicionals", "success")
+                                    totes_cancons.extend(cancons_genere)
 
                             log("Eliminant duplicats...", "info")
                             cancons_uniques = eliminar_duplicats(totes_cancons)
