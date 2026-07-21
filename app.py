@@ -1112,7 +1112,6 @@ if 'feedback_timestamp' not in st.session_state:
     st.session_state.feedback_timestamp = 0
 if 'artistes_ultima_cerca' not in st.session_state:
     st.session_state.artistes_ultima_cerca = []
-
 # ============================================================
 # 18. INTERFICIE PRINCIPAL
 # ============================================================
@@ -1463,6 +1462,7 @@ if CLIENT_ID and CLIENT_SECRET:
                         genere_seleccionat = st.selectbox("Guardats:", ["-- Nou --"] + tots_generes, key="sel_genere_guardat_aprendre")
                         if genere_seleccionat != "-- Nou --":
                             st.session_state.genere_aprendre_seleccionat = genere_seleccionat
+                            st.session_state.artistes_aprendre_text = '\n'.join([a[0] for a in obtenir_artistes_per_genere(genere_seleccionat)]) if obtenir_artistes_per_genere(genere_seleccionat) else ''
                             st.rerun()
                     else:
                         st.caption("Sense generes")
@@ -1476,6 +1476,12 @@ if CLIENT_ID and CLIENT_SECRET:
                     height=300,
                     key="ta_artistes_aprendre"
                 )
+
+
+                # Botó per buidar el camp
+                if st.button("🗑️ Buidar Camp", key="btn_buidar_camp", use_container_width=True):
+                    st.session_state.artistes_aprendre_text = ""
+                    st.rerun()
 
                 col_btn1, col_btn2, col_btn3 = st.columns(3)
 
@@ -1501,7 +1507,7 @@ if CLIENT_ID and CLIENT_SECRET:
                                 st.success(f"✅ {count} artistes guardats a la base de dades com a '{genere_aprendre}'!")
                                 # Actualitzem session_state amb els valors actuals
                                 st.session_state.genere_aprendre_seleccionat = genere_aprendre
-                                st.session_state.artistes_aprendre_text = ""  # Buidem per poder posar nous artistes
+                                # Camp mantingut per si l'usuari vol guardar més artistes del mateix genere
                                 st.balloons()
                             else:
                                 st.warning("No s'han trobat noms d'artistes al text.")
