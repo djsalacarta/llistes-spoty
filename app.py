@@ -1187,12 +1187,12 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 st.divider()
 
-                if st.session_state.artistes_ultima_cerca:
-                    # Inicialitzem la llista d'artistes processats a la sessió
+                # Inicialitzem la llista d'artistes processats a la sessió
                 if 'artistes_processats_feedback' not in st.session_state:
                     st.session_state.artistes_processats_feedback = set()
 
-                with st.expander("🧠 Feedback Artistes", expanded=False):
+                if st.session_state.artistes_ultima_cerca:
+                    with st.expander("🧠 Feedback Artistes", expanded=False):
                         st.write("Marca quins artistes SON d'aquest estil:")
 
                         # Filtrem artistes ja processats (DB + sessió actual)
