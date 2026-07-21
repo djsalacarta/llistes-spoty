@@ -1503,7 +1503,6 @@ if CLIENT_ID and CLIENT_SECRET:
                                 st.session_state.genere_aprendre_seleccionat = genere_aprendre
                                 st.session_state.artistes_aprendre_text = ""  # Buidem per poder posar nous artistes
                                 st.balloons()
-                                st.rerun()
                             else:
                                 st.warning("No s'han trobat noms d'artistes al text.")
                         else:
