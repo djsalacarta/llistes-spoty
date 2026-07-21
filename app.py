@@ -928,6 +928,11 @@ if 'text_copiar' not in st.session_state:
     st.session_state.text_copiar = ""
 if 'titol_playlist' not in st.session_state:
     st.session_state.titol_playlist = "Nova Playlist"
+if 'artistes_processats_feedback' not in st.session_state:
+    st.session_state.artistes_processats_feedback = set()
+if 'feedback_timestamp' not in st.session_state:
+    st.session_state.feedback_timestamp = 0
+
 if 'artistes_ultima_cerca' not in st.session_state:
     st.session_state.artistes_ultima_cerca = []
 
@@ -945,15 +950,22 @@ if CLIENT_ID and CLIENT_SECRET:
         log(f"Connectat: {usuari_sp['display_name']}", "success")
 
         # ===== CAPÇALERA =====
-        col_info1, col_info2, col_info3, col_info4 = st.columns(4)
-        with col_info1:
-            st.success(f"Spotify: {usuari_sp['display_name']}")
-        with col_info2:
-            st.info(f"IA: {MODEL_IA}")
-        with col_info3:
-            st.info(f"Discogs: {'Actiu' if DISCOGS_TOKEN else 'Sense token'}")
-        with col_info4:
-            st.metric("📦 Versió", "2.0.0")
+        st.markdown("""
+        <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px; padding: 15px; background: linear-gradient(90deg, #1a1a2e 0%, #16213e 100%); border-radius: 10px; border: 1px solid #333;">
+            <div style="font-size: 32px;">🎛️</div>
+            <div>
+                <div style="font-size: 24px; font-weight: bold; color: #00ff88;">Rastrejador de Novetats Reals</div>
+                <div style="font-size: 14px; color: #888;">Spotify: <span style="color: #1DB954;">●</span> {usuari} | IA: {model} | Discogs: {discogs}</div>
+            </div>
+            <div style="margin-left: auto; background: #0a0a0a; padding: 5px 15px; border-radius: 20px; border: 1px solid #333;">
+                <span style="color: #00ff88; font-weight: bold; font-size: 12px;">📦 v2.0.0</span>
+            </div>
+        </div>
+        """.format(
+            usuari=usuari_sp['display_name'],
+            model=MODEL_IA or "No disponible",
+            discogs="Actiu" if DISCOGS_TOKEN else "Sense token"
+        ), unsafe_allow_html=True)
 
         # ===== PESTANYES =====
         tab_cercar, tab_aprendre = st.tabs(["🔍 Cercar Cançons", "🎓 Aprendre"])
@@ -1033,7 +1045,11 @@ if CLIENT_ID and CLIENT_SECRET:
             col_esquerra, col_dreta = st.columns([1, 2])
 
             with col_esquerra:
-                st.subheader("Cerca")
+                st.markdown("""
+                <div style="background: #1a1a2e; padding: 10px 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #00ff88;">
+                    <span style="color: #00ff88; font-weight: bold; font-size: 16px;">🔍 Controls de Cerca</span>
+                </div>
+                """, unsafe_allow_html=True)
 
                 estil_triat = st.text_input("Estil / Genere:", "Makina", key="input_estil")
                 any_triat = st.text_input("Any / Rang (Ex: 2026, 1990/2005):", "2025/2026", key="input_any")
@@ -1053,17 +1069,18 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 quantitat = st.number_input("Cancons a trobar:", min_value=10, max_value=200, value=100, step=10, key="input_quantitat")
 
-                st.subheader("Opcions Avançades")
+                st.markdown("""
+                <div style="background: #1a1a2e; padding: 8px 12px; border-radius: 6px; margin: 15px 0 10px 0; border-left: 3px solid #3b82f6;">
+                    <span style="color: #3b82f6; font-weight: bold; font-size: 13px;">⚙️ Opcions Avançades</span>
+                </div>
+                """, unsafe_allow_html=True)
 
                 col_opt1, col_opt2 = st.columns(2)
                 with col_opt1:
                     max_per_artista = st.number_input("Max per artista:", min_value=1, max_value=10, value=3, step=1, key="input_max_artista")
-                    validar_genere = st.checkbox("Validar genere", value=True, key="chk_validar")
                 with col_opt2:
                     ordenacio = st.selectbox("Ordenar per:", ["popularitat", "bpm", "any", "aleatori"], index=0, key="sel_ordenacio")
                     min_conf = st.selectbox("Min confiança DB:", ["segur", "probable", "dubtos"], index=1, key="sel_conf")
-
-                any_estricte = st.checkbox("Any estricte", value=True, key="chk_estricte")
 
                 col_rastreig, col_refrescar = st.columns(2)
                 with col_rastreig:
@@ -1079,6 +1096,12 @@ if CLIENT_ID and CLIENT_SECRET:
                             st.warning(f"No hi ha artistes a la DB per '{estil_triat}'.")
                             st.session_state.artistes_ultima_cerca = []
                         st.rerun()
+
+                st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+                render_console()
+                if st.button("Netejar Consola", key="btn_netejar"):
+                    clear_console()
+                    st.rerun()
 
                 if btn_rastreig:
                     log(f"Rastreig: {estil_triat} | {any_triat} | {quantitat} cancons", "info")
@@ -1103,6 +1126,8 @@ if CLIENT_ID and CLIENT_SECRET:
                             artistes_text = "\n".join([f"{a} ({g}) [{c}]" for a, g, c in artistes_validats])
                             st.info(f"IA Passada 2: {len(artistes_validats)} artistes validats:\n\n{artistes_text}")
                             st.session_state.artistes_ultima_cerca = artistes_validats
+                            st.session_state.artistes_processats_feedback = set()
+                            st.session_state.feedback_timestamp = time.time()
 
                             totes_cancons = []
 
@@ -1177,56 +1202,64 @@ if CLIENT_ID and CLIENT_SECRET:
                             actualitzar_estadistiques_genere(estil_triat)
 
             with col_dreta:
-                st.subheader("Consola de Depuracio")
-                render_console()
-
-                if st.button("Netejar Consola", key="btn_netejar"):
-                    clear_console()
-                    st.rerun()
-
-                st.divider()
+                # Consola moguda a l'esquerra
 
                 if st.session_state.artistes_ultima_cerca:
-                    with st.expander("🧠 Feedback Artistes", expanded=False):
-                        st.write("Marca quins artistes SON d'aquest estil:")
-                        # Filtrem artistes ja processats
-                        artistes_pendents = []
-                        for a, g, c in st.session_state.artistes_ultima_cerca:
-                            conn_fb = db_conn()
-                            cursor_fb = conn_fb.cursor()
-                            cursor_fb.execute("SELECT 1 FROM artistes_rebutjats WHERE nom = ? AND genere = ?", (a, estil_triat))
-                            es_rebutjat = cursor_fb.fetchone() is not None
-                            cursor_fb.execute("SELECT confiança FROM artistes_confirmats WHERE nom = ? AND genere = ?", (a, estil_triat))
-                            fila = cursor_fb.fetchone()
-                            conn_fb.close()
-                            if es_rebutjat:
-                                continue
-                            if fila and fila[0] == "segur":
-                                continue
-                            artistes_pendents.append((a, g, c))
+                    st.markdown("""
+                    <div style="background: #1a1a2e; padding: 10px 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #f59e0b;">
+                        <span style="color: #f59e0b; font-weight: bold; font-size: 16px;">🧠 Feedback Artistes</span>
+                        <span style="color: #888; font-size: 12px; margin-left: 10px;">Marca quins SON d'aquest estil</span>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-                        if not artistes_pendents:
-                            st.success("✅ Tots els artistes ja han estat validats!")
-                        else:
-                            for i, (artista, genere, conf) in enumerate(artistes_pendents):
-                                cols = st.columns([3, 1, 1])
-                                with cols[0]:
-                                    st.write(f"**{artista}** ({genere}) [{conf}]")
-                                with cols[1]:
-                                    if st.button(f"✅ Si", key=f"btn_si_{i}"):
-                                        guardar_artista_confirmat(artista, estil_triat, genere, "usuari", "segur")
-                                        log(f"DB: {artista} marcat com a SEGUR", "success")
-                                        st.rerun()
-                                with cols[2]:
-                                    if st.button(f"❌ No", key=f"btn_no_{i}"):
-                                        guardar_artista_rebutjat(artista, estil_triat, "No es del genere (usuari)")
-                                        log(f"DB: {artista} marcat com a REBUTJAT", "warning")
-                                        st.rerun()
+                    artistes_pendents = []
+                    for a, g, c in st.session_state.artistes_ultima_cerca:
+                        if a in st.session_state.artistes_processats_feedback:
+                            continue
+                        conn_fb = db_conn()
+                        cursor_fb = conn_fb.cursor()
+                        cursor_fb.execute("SELECT 1 FROM artistes_rebutjats WHERE nom = ? AND genere = ?", (a, estil_triat))
+                        es_rebutjat = cursor_fb.fetchone() is not None
+                        cursor_fb.execute("SELECT confiança FROM artistes_confirmats WHERE nom = ? AND genere = ?", (a, estil_triat))
+                        fila = cursor_fb.fetchone()
+                        conn_fb.close()
+                        if es_rebutjat:
+                            st.session_state.artistes_processats_feedback.add(a)
+                            continue
+                        if fila and fila[0] == "segur":
+                            st.session_state.artistes_processats_feedback.add(a)
+                            continue
+                        artistes_pendents.append((a, g, c))
+
+                    if not artistes_pendents:
+                        st.success("✅ Tots els artistes ja han estat validats!")
+                    else:
+                        for i, (artista, genere, conf) in enumerate(artistes_pendents):
+                            cols = st.columns([3, 1, 1])
+                            with cols[0]:
+                                st.write(f"**{artista}** ({genere}) [{conf}]")
+                            with cols[1]:
+                                if st.button(f"✅ Si", key=f"btn_si_{i}_{st.session_state.feedback_timestamp}"):
+                                    guardar_artista_confirmat(artista, estil_triat, genere, "usuari", "segur")
+                                    st.session_state.artistes_processats_feedback.add(artista)
+                                    log(f"DB: {artista} marcat com a SEGUR", "success")
+                                    st.rerun()
+                            with cols[2]:
+                                if st.button(f"❌ No", key=f"btn_no_{i}_{st.session_state.feedback_timestamp}"):
+                                    guardar_artista_rebutjat(artista, estil_triat, "No es del genere (usuari)")
+                                    st.session_state.artistes_processats_feedback.add(artista)
+                                    log(f"DB: {artista} marcat com a REBUTJAT", "warning")
+                                    st.rerun()
 
                 st.divider()
 
                 if st.session_state.cancons_reals:
-                    st.subheader(f"Resultats ({len(st.session_state.cancons_reals)} cancons)")
+                    st.markdown(f"""
+                    <div style="background: #1a1a2e; padding: 10px 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #3b82f6;">
+                        <span style="color: #3b82f6; font-weight: bold; font-size: 16px;">📊 Resultats</span>
+                        <span style="color: #888; font-size: 14px; margin-left: 10px;">{len(st.session_state.cancons_reals)} cançons trobades</span>
+                    </div>
+                    """, unsafe_allow_html=True)
                     df = pd.DataFrame(st.session_state.cancons_reals)
                     st.dataframe(
                         df, use_container_width=True, hide_index=True,
@@ -1238,7 +1271,11 @@ if CLIENT_ID and CLIENT_SECRET:
                     )
 
                     st.divider()
-                    st.subheader("Crear Playlist a Spotify")
+                    st.markdown("""
+                    <div style="background: #1a1a2e; padding: 10px 15px; border-radius: 8px; margin: 20px 0 15px 0; border-left: 3px solid #1DB954;">
+                        <span style="color: #1DB954; font-weight: bold; font-size: 16px;">🎵 Crear Playlist a Spotify</span>
+                    </div>
+                    """, unsafe_allow_html=True)
 
                     nom_llista = st.text_input("Nom de la playlist:", value=st.session_state.titol_playlist, key="input_nom_playlist")
 
