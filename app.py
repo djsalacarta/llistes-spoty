@@ -1287,45 +1287,6 @@ if CLIENT_ID and CLIENT_SECRET:
                     for gen, nart, ncan in stats["top_generes"]:
                         st.write(f"• **{gen}**: {nart} artistes, {ncan} cancons")
 
-                # ===== BOTONS INTEL·LIGENTS PER GÈNERE =====
-                st.markdown("<div style='margin-top: 25px;'></div>", unsafe_allow_html=True)
-                st.markdown("""
-                <div style="background: #1a1a2e; padding: 10px 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #ff0066;">
-                    <span style="color: #ff0066; font-weight: bold; font-size: 16px;">🧠 Gèneres Intel·ligents</span>
-                </div>
-                """, unsafe_allow_html=True)
-
-                generes_inteligents = obtenir_generes_inteligents()
-                if generes_inteligents:
-                    st.caption("Clica un gènere per carregar els seus artistes i estils:")
-                    cols_per_fila = 2
-                    for i in range(0, len(generes_inteligents), cols_per_fila):
-                        cols = st.columns(cols_per_fila)
-                        for j in range(cols_per_fila):
-                            idx = i + j
-                            if idx < len(generes_inteligents):
-                                nom, estils, seeds, color, icona = generes_inteligents[idx]
-                                with cols[j]:
-                                    btn_label = f"{icona} {nom.title()}"
-                                    if st.button(btn_label, key=f"btn_gen_intel_{idx}", use_container_width=True):
-                                        st.session_state.genere_aprendre_seleccionat = nom
-                                        # Carreguem els artistes del gènere
-                                        artistes_gen = obtenir_artistes_per_genere(nom)
-                                        if artistes_gen:
-                                            st.session_state.artistes_aprendre_text = "\n".join([a[0] for a in artistes_gen])
-                                        else:
-                                            # Si no hi ha artistes guardats, posem els seeds del gènere intel·ligent
-                                            info_gen = obtenir_genere_inteligent(nom)
-                                            if info_gen and info_gen[2]:  # seeds
-                                                st.session_state.artistes_aprendre_text = info_gen[2].replace(", ", "\n")
-                                            else:
-                                                st.session_state.artistes_aprendre_text = ""
-                                        st.rerun()
-                                    # Mostrem els estils com a caption
-                                    if estils:
-                                        st.caption(f"🎵 {estils}")
-                else:
-                    st.info("📝 Guarda el primer gènere per veure els botons intel·ligents aquí!")
 
         # ========================================================
         # PESTANYA 2: CERCAR CANÇONS
@@ -1340,18 +1301,19 @@ if CLIENT_ID and CLIENT_SECRET:
                 </div>
                 """, unsafe_allow_html=True)
 
-                # Botons ràpids de gènere
-                generes_rapids = obtenir_generes_inteligents()
-                if generes_rapids:
-                    st.markdown("<span style='color: #888; font-size: 12px;'>🧠 Gèneres ràpids:</span>", unsafe_allow_html=True)
-                    cols_rapids = st.columns(min(len(generes_rapids), 4))
-                    for idx, (nom, estils, seeds, color, icona) in enumerate(generes_rapids[:4]):
-                        with cols_rapids[idx]:
-                            if st.button(f"{icona} {nom.title()}", key=f"btn_rapid_{idx}", use_container_width=True):
-                                st.session_state.input_estil = nom
-                                st.rerun()
-
-                estil_triat = st.text_input("Estil / Genere:", value=st.session_state.input_estil, key="input_estil")
+                # Selector de genere guardat per a la cerca
+                generes_guardats_cercar = obtenir_tots_generes_db()
+                if generes_guardats_cercar:
+                    col_estil1, col_estil2 = st.columns([2, 1])
+                    with col_estil1:
+                        estil_triat = st.text_input("Estil / Genere:", value=st.session_state.input_estil, key="input_estil")
+                    with col_estil2:
+                        genere_cercar_sel = st.selectbox("Guardats:", ["-- Manual --"] + generes_guardats_cercar, key="sel_genere_cercar")
+                        if genere_cercar_sel != "-- Manual --":
+                            st.session_state.input_estil = genere_cercar_sel
+                            estil_triat = genere_cercar_sel
+                else:
+                    estil_triat = st.text_input("Estil / Genere:", value=st.session_state.input_estil, key="input_estil")
                 any_triat = st.text_input("Any / Rang (Ex: 2026, 1990/2005):", "2025/2026", key="input_any")
 
                 tipus_detectat = detectar_tipus_cerca(any_triat)
