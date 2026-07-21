@@ -1105,7 +1105,7 @@ if 'input_estil' not in st.session_state:
 if 'genere_aprendre_seleccionat' not in st.session_state:
     st.session_state.genere_aprendre_seleccionat = "Makina"
 if 'artistes_aprendre_text' not in st.session_state:
-    st.session_state.artistes_aprendre_text = ""
+                    st.session_state["ta_artistes_aprendre"] = ""
 if 'artistes_processats_feedback' not in st.session_state:
     st.session_state.artistes_processats_feedback = set()
 if 'feedback_timestamp' not in st.session_state:
@@ -1462,7 +1462,7 @@ if CLIENT_ID and CLIENT_SECRET:
                         genere_seleccionat = st.selectbox("Guardats:", ["-- Nou --"] + tots_generes, key="sel_genere_guardat_aprendre")
                         if genere_seleccionat != "-- Nou --":
                             st.session_state.genere_aprendre_seleccionat = genere_seleccionat
-                            st.session_state.artistes_aprendre_text = '\n'.join([a[0] for a in obtenir_artistes_per_genere(genere_seleccionat)]) if obtenir_artistes_per_genere(genere_seleccionat) else ''
+                            st.session_state['ta_artistes_aprendre'] = '\n'.join([a[0] for a in obtenir_artistes_per_genere(genere_seleccionat)]) if obtenir_artistes_per_genere(genere_seleccionat) else ''
                             st.rerun()
                     else:
                         st.caption("Sense generes")
@@ -1470,17 +1470,17 @@ if CLIENT_ID and CLIENT_SECRET:
                 if tots_generes:
                     st.caption(f"📚 Generes a la DB: {', '.join(tots_generes)}")
 
-                artistes_text = st.text_area(
+                st.text_area(
                     "Llista d'artistes (un per linia):",
-                    value=st.session_state.artistes_aprendre_text,
                     height=300,
                     key="ta_artistes_aprendre"
                 )
+                artistes_text = st.session_state.get("ta_artistes_aprendre", "")
 
 
                 # Botó per buidar el camp
                 if st.button("🗑️ Buidar Camp", key="btn_buidar_camp", use_container_width=True):
-                    st.session_state.artistes_aprendre_text = ""
+                    st.session_state["ta_artistes_aprendre"] = ""
                     st.rerun()
 
                 col_btn1, col_btn2, col_btn3 = st.columns(3)
