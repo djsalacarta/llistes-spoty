@@ -549,13 +549,33 @@ def render_console():
 def carregar_credencials():
     creds = {"CLIENT_ID": "", "CLIENT_SECRET": "", "GROQ_KEY": "", "GROQ_URL": "", "DISCOGS_TOKEN": ""}
     try:
-        creds["CLIENT_ID"] = st.secrets.get("SPOTIFY_CLIENT_ID", "")
-        creds["CLIENT_SECRET"] = st.secrets.get("SPOTIFY_CLIENT_SECRET", "")
-        creds["GROQ_KEY"] = st.secrets.get("GROQ_KEY", "")
-        creds["GROQ_URL"] = st.secrets.get("GROQ_URL", "")
-        creds["DISCOGS_TOKEN"] = st.secrets.get("DISCOGS_TOKEN", "")
+        # Format TOML amb seccions (st.secrets["section"]["key"])
+        creds["CLIENT_ID"] = st.secrets.get("spotify", {}).get("client_id", "")
+        creds["CLIENT_SECRET"] = st.secrets.get("spotify", {}).get("client_secret", "")
+        creds["GROQ_KEY"] = st.secrets.get("groq", {}).get("key", "")
+        creds["GROQ_URL"] = st.secrets.get("groq", {}).get("url", "")
+        creds["DISCOGS_TOKEN"] = st.secrets.get("discogs", {}).get("token", "")
     except Exception:
         pass
+    # Fallback: format pla antic (st.secrets["KEY"])
+    if not creds["CLIENT_ID"]:
+        try:
+            creds["CLIENT_ID"] = st.secrets.get("SPOTIFY_CLIENT_ID", "")
+            creds["CLIENT_SECRET"] = st.secrets.get("SPOTIFY_CLIENT_SECRET", "")
+        except Exception:
+            pass
+    if not creds["GROQ_KEY"]:
+        try:
+            creds["GROQ_KEY"] = st.secrets.get("GROQ_KEY", "")
+            creds["GROQ_URL"] = st.secrets.get("GROQ_URL", "")
+        except Exception:
+            pass
+    if not creds["DISCOGS_TOKEN"]:
+        try:
+            creds["DISCOGS_TOKEN"] = st.secrets.get("DISCOGS_TOKEN", "")
+        except Exception:
+            pass
+    # Fallback: fitxers locals
     if not creds["CLIENT_ID"] and os.path.exists(RUTA_API_SPOTIFY):
         try:
             with open(RUTA_API_SPOTIFY, "r", encoding="utf-8") as f2:
