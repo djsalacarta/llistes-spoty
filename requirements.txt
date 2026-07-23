@@ -1,4 +1,5 @@
 streamlit
 spotipy
-pandas
 requests
+pandas
+firebase-admin
