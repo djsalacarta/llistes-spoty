@@ -24,3 +24,5 @@ ENV/
 # Sistema operatiu
 .DS_Store
 Thumbs.db
+spoty-bd-firebase-adminsdk-fbsvc-846ece3ab5.json
+*.json
