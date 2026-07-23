@@ -6,266 +6,251 @@ import re
 import requests
 import pandas as pd
 import json
-import sqlite3
 import time
 import random
 from datetime import datetime
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # ============================================================
 # 1. CONFIGURACIO
 # ============================================================
 RUTA_API_SPOTIFY = r"D:\Programa llistes Spoty\api.txt"
 RUTA_CONFIG_JSON = r"D:\Programa llistes Spoty\configuracio_api.json"
-RUTA_DB = r"D:\Programa llistes Spoty\musica_db.sqlite"
+RUTA_FIREBASE_JSON = "spoty-bd-firebase-adminsdk-fbsvc-846ece3ab5.json"
 REDIRECT_URI = "http://127.0.0.1:8501"
 
 st.set_page_config(page_title="Rastrejador de Novetats Reals v2.0.0", page_icon="🎛️", layout="wide")
 
 # ============================================================
-# 2. BASE DE DADES SQLITE
+# 2. FIREBASE ADMIN - INICIALITZACIO
 # ============================================================
-def init_db():
-    conn = sqlite3.connect(RUTA_DB)
-    cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS artistes_confirmats (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nom TEXT NOT NULL,
-        genere TEXT NOT NULL,
-        subgenere TEXT,
-        font TEXT DEFAULT 'IA',
-        confiança TEXT DEFAULT 'probable',
-        data_afegit TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        cerca_count INTEGER DEFAULT 1,
-        UNIQUE(nom, genere)
-    )
-    """)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS artistes_rebutjats (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nom TEXT NOT NULL,
-        genere TEXT NOT NULL,
-        motiu TEXT,
-        data_rebutjat TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(nom, genere)
-    )
-    """)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS cancons_confirmades (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        titol TEXT NOT NULL,
-        artista TEXT NOT NULL,
-        genere TEXT NOT NULL,
-        any_ll INTEGER,
-        bpm REAL,
-        clau TEXT,
-        popularitat INTEGER,
-        font TEXT DEFAULT 'Spotify',
-        spotify_uri TEXT,
-        data_afegit TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(titol, artista, genere)
-    )
-    """)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS generes_inteligents (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nom_genere TEXT NOT NULL UNIQUE,
-        estils TEXT DEFAULT '',
-        seeds TEXT DEFAULT '',
-        color TEXT DEFAULT '#00ff88',
-        icona TEXT DEFAULT '🎵',
-        data_creat TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS generes_apresos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nom_genere TEXT NOT NULL UNIQUE,
-        descripcio TEXT,
-        artistes_clau TEXT,
-        subgeneres TEXT,
-        total_artistes INTEGER DEFAULT 0,
-        total_cancons INTEGER DEFAULT 0,
-        ultima_actualitzacio TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-    conn.commit()
-    conn.close()
+_db = None
 
-def db_conn():
-    return sqlite3.connect(RUTA_DB)
+def init_firebase():
+    global _db
+    if _db is not None:
+        return _db
+    try:
+        if not firebase_admin._apps:
+            firebase_creds = None
+            try:
+                firebase_creds = dict(st.secrets["firebase"])
+            except Exception:
+                pass
+            if not firebase_creds and os.path.exists(RUTA_FIREBASE_JSON):
+                with open(RUTA_FIREBASE_JSON, "r", encoding="utf-8") as f2:
+                    firebase_creds = json.load(f2)
+            if firebase_creds:
+                pk = firebase_creds["private_key"]
+                firebase_creds["private_key"] = pk.replace("\\n", chr(10))
+                cred = credentials.Certificate(firebase_creds)
+                firebase_admin.initialize_app(cred)
+                _db = firestore.client()
+                log("Firebase connectat correctament", "success")
+                return _db
+        else:
+            _db = firestore.client()
+            return _db
+    except Exception as e:
+        log(f"Error Firebase: {e}", "error")
+    return None
 
-def consultar_artistes_db(genere, min_confiança="probable"):
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT nom, subgenere, confiança, cerca_count 
-        FROM artistes_confirmats 
-        WHERE LOWER(genere) = LOWER(?) 
-        ORDER BY 
-            CASE confiança WHEN 'segur' THEN 1 WHEN 'probable' THEN 2 ELSE 3 END,
-            cerca_count DESC
-    """, (genere,))
-    resultats = cursor.fetchall()
-    conn.close()
-    mapping = {'segur': 1, 'probable': 2, 'dubtos': 3}
-    min_nivell = mapping.get(min_confiança, 2)
-    filtrats = []
-    for nom, sub, conf, count in resultats:
-        nivell = mapping.get(conf, 3)
-        if nivell <= min_nivell:
-            filtrats.append((nom, sub or "desconegut", conf))
-    return filtrats
+def get_db():
+    if _db is None:
+        return init_firebase()
+    return _db
 
-def consultar_rebutjats_db(genere):
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT nom FROM artistes_rebutjats WHERE LOWER(genere) = LOWER(?)", (genere,))
-    resultats = {r[0] for r in cursor.fetchall()}
-    conn.close()
-    return resultats
-
-def guardar_artista_confirmat(nom, genere, subgenere=None, font="IA", confiança="probable"):
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO artistes_confirmats (nom, genere, subgenere, font, confiança, cerca_count)
-        VALUES (?, ?, ?, ?, ?, 1)
-        ON CONFLICT(nom, genere) DO UPDATE SET
-            cerca_count = cerca_count + 1,
-            confiança = CASE WHEN excluded.confiança = 'segur' THEN 'segur' ELSE artistes_confirmats.confiança END,
-            data_afegit = CURRENT_TIMESTAMP
-    """, (nom, genere, subgenere, font, confiança))
-    conn.commit()
-    conn.close()
+# ============================================================
+# 3. BASE DE DADES FIRESTORE
+# ============================================================
+def guardar_artista_confirmat(nom, genere, subgenere=None, font="IA", confianza="probable"):
+    db = get_db()
+    if not db:
+        return
+    doc_id = f"{nom.lower().strip()}_{genere.lower().strip()}"
+    doc_ref = db.collection("artistes_confirmats").document(doc_id)
+    doc = doc_ref.get()
+    if doc.exists:
+        data = doc.to_dict()
+        doc_ref.update({
+            "cerca_count": data.get("cerca_count", 0) + 1,
+            "confianza": "segur" if confianza == "segur" else data.get("confianza", "probable"),
+            "data_afegit": firestore.SERVER_TIMESTAMP
+        })
+    else:
+        doc_ref.set({
+            "nom": nom,
+            "genere": genere,
+            "subgenere": subgenere or "",
+            "font": font,
+            "confianza": confianza,
+            "data_afegit": firestore.SERVER_TIMESTAMP,
+            "cerca_count": 1
+        })
 
 def guardar_artista_rebutjat(nom, genere, motiu="No es del genere"):
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT OR IGNORE INTO artistes_rebutjats (nom, genere, motiu)
-        VALUES (?, ?, ?)
-    """, (nom, genere, motiu))
-    conn.commit()
-    conn.close()
+    db = get_db()
+    if not db:
+        return
+    doc_id = f"{nom.lower().strip()}_{genere.lower().strip()}"
+    db.collection("artistes_rebutjats").document(doc_id).set({
+        "nom": nom,
+        "genere": genere,
+        "motiu": motiu,
+        "data_rebutjat": firestore.SERVER_TIMESTAMP
+    })
 
 def guardar_canco_confirmada(titol, artista, genere, any_ll, bpm=None, clau=None, popularitat=None, font="Spotify", spotify_uri=None):
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT OR IGNORE INTO cancons_confirmades (titol, artista, genere, any_ll, bpm, clau, popularitat, font, spotify_uri)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (titol, artista, genere, any_ll, bpm, clau, popularitat, font, spotify_uri))
-    conn.commit()
-    conn.close()
+    db = get_db()
+    if not db:
+        return
+    doc_id = f"{titol.lower().strip()}_{artista.lower().strip()}_{genere.lower().strip()}"
+    db.collection("cancons_confirmades").document(doc_id).set({
+        "titol": titol,
+        "artista": artista,
+        "genere": genere,
+        "any_ll": any_ll,
+        "bpm": bpm,
+        "clau": clau,
+        "popularitat": popularitat,
+        "font": font,
+        "spotify_uri": spotify_uri or "",
+        "data_afegit": firestore.SERVER_TIMESTAMP
+    })
+
+def consultar_artistes_db(genere, min_confianza="probable"):
+    db = get_db()
+    if not db:
+        return []
+    mapping = {"segur": 1, "probable": 2, "dubtos": 3}
+    min_nivell = mapping.get(min_confianza, 2)
+    docs = db.collection("artistes_confirmats").where("genere", "==", genere).stream()
+    resultats = []
+    for doc in docs:
+        d = doc.to_dict()
+        nivell = mapping.get(d.get("confianza", "probable"), 3)
+        if nivell <= min_nivell:
+            resultats.append((d.get("nom"), d.get("subgenere") or "desconegut", d.get("confianza", "probable"), d.get("cerca_count", 1)))
+    resultats.sort(key=lambda x: (mapping.get(x[2], 3), -x[3]))
+    return resultats
+
+def consultar_rebutjats_db(genere):
+    db = get_db()
+    if not db:
+        return set()
+    docs = db.collection("artistes_rebutjats").where("genere", "==", genere).stream()
+    return {d.to_dict().get("nom", "") for d in docs}
+
+def obtenir_artistes_per_genere(genere):
+    db = get_db()
+    if not db:
+        return []
+    docs = db.collection("artistes_confirmats").where("genere", "==", genere).order_by("nom").stream()
+    return [(d.to_dict().get("nom"), d.to_dict().get("subgenere"), d.to_dict().get("confianza"), d.to_dict().get("cerca_count", 0)) for d in docs]
+
+def obtenir_tots_generes_db():
+    db = get_db()
+    if not db:
+        return []
+    docs = db.collection("artistes_confirmats").stream()
+    generes = {}
+    for doc in docs:
+        g = doc.to_dict().get("genere", "")
+        if g:
+            generes[g.lower()] = g
+    docs2 = db.collection("generes_apresos").stream()
+    for doc in docs2:
+        g = doc.to_dict().get("nom_genere", "")
+        if g:
+            generes[g.lower()] = g
+    return sorted(generes.values(), key=str.lower)
 
 def actualitzar_estadistiques_genere(genere):
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM artistes_confirmats WHERE LOWER(genere) = LOWER(?)", (genere,))
-    total_art = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM cancons_confirmades WHERE LOWER(genere) = LOWER(?)", (genere,))
-    total_can = cursor.fetchone()[0]
-    cursor.execute("""
-        INSERT INTO generes_apresos (nom_genere, total_artistes, total_cancons)
-        VALUES (?, ?, ?)
-        ON CONFLICT(nom_genere) DO UPDATE SET
-            total_artistes = excluded.total_artistes,
-            total_cancons = excluded.total_cancons,
-            ultima_actualitzacio = CURRENT_TIMESTAMP
-    """, (genere, total_art, total_can))
-    conn.commit()
-    conn.close()
+    db = get_db()
+    if not db:
+        return
+    docs_art = db.collection("artistes_confirmats").where("genere", "==", genere).stream()
+    total_art = sum(1 for _ in docs_art)
+    docs_can = db.collection("cancons_confirmades").where("genere", "==", genere).stream()
+    total_can = sum(1 for _ in docs_can)
+    db.collection("generes_apresos").document(genere.lower()).set({
+        "nom_genere": genere,
+        "total_artistes": total_art,
+        "total_cancons": total_can,
+        "ultima_actualitzacio": firestore.SERVER_TIMESTAMP
+    }, merge=True)
 
 def obtenir_estadistiques_db():
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM artistes_confirmats")
-    total_conf = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM artistes_rebutjats")
-    total_reb = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM cancons_confirmades")
-    total_can = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM generes_apresos")
-    total_gen = cursor.fetchone()[0]
-    cursor.execute("SELECT nom_genere, total_artistes, total_cancons FROM generes_apresos ORDER BY total_artistes DESC LIMIT 5")
-    top_generes = cursor.fetchall()
-    conn.close()
+    db = get_db()
+    if not db:
+        return {"artistes_confirmats": 0, "artistes_rebutjats": 0, "cancons_confirmades": 0, "generes_apresos": 0, "top_generes": []}
+    total_conf = sum(1 for _ in db.collection("artistes_confirmats").stream())
+    total_reb = sum(1 for _ in db.collection("artistes_rebutjats").stream())
+    total_can = sum(1 for _ in db.collection("cancons_confirmades").stream())
+    total_gen = sum(1 for _ in db.collection("generes_apresos").stream())
+    docs = db.collection("generes_apresos").order_by("total_artistes", direction=firestore.Query.DESCENDING).limit(5).stream()
+    top_generes = [(d.to_dict().get("nom_genere"), d.to_dict().get("total_artistes", 0), d.to_dict().get("total_cancons", 0)) for d in docs]
     return {
         "artistes_confirmats": total_conf, "artistes_rebutjats": total_reb,
         "cancons_confirmades": total_can, "generes_apresos": total_gen,
         "top_generes": top_generes
     }
 
-def obtenir_tots_generes_db():
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT LOWER(nom_genere) as genere_lower, nom_genere FROM generes_apresos ORDER BY nom_genere")
-    generes = cursor.fetchall()
-    cursor.execute("SELECT DISTINCT LOWER(genere) as genere_lower, genere FROM artistes_confirmats ORDER BY genere")
-    artistes_generes = cursor.fetchall()
-    conn.close()
-    tots = {}
-    for g_lower, g_original in generes:
-        tots[g_lower] = g_original
-    for g_lower, g_original in artistes_generes:
-        if g_lower not in tots:
-            tots[g_lower] = g_original
-    return sorted(tots.values(), key=str.lower)
-
-def obtenir_artistes_per_genere(genere):
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT nom, subgenere, confiança, cerca_count FROM artistes_confirmats WHERE LOWER(genere) = LOWER(?) ORDER BY nom", (genere,))
-    resultats = cursor.fetchall()
-    conn.close()
-    return resultats
-
-init_db()
+def esborrar_genere(genere):
+    db = get_db()
+    if not db:
+        return
+    for col_name in ["artistes_confirmats", "artistes_rebutjats", "cancons_confirmades", "generes_apresos", "generes_inteligents"]:
+        docs = db.collection(col_name).where("genere", "==", genere).stream()
+        for doc in docs:
+            doc.reference.delete()
+        if col_name == "generes_apresos":
+            db.collection(col_name).document(genere.lower()).delete()
+        if col_name == "generes_inteligents":
+            db.collection(col_name).document(genere.lower()).delete()
 
 # ============================================================
-# 3. FUNCIONS INTEL·LIGENTS PER GENERES
+# 4. GENERES INTEL·LIGENTS
 # ============================================================
 def guardar_genere_inteligent(nom_genere, estils="", seeds="", color="#00ff88", icona="🎵"):
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO generes_inteligents (nom_genere, estils, seeds, color, icona)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(nom_genere) DO UPDATE SET
-            estils = excluded.estils,
-            seeds = excluded.seeds,
-            color = excluded.color,
-            icona = excluded.icona
-    """, (nom_genere.lower().strip(), estils, seeds, color, icona))
-    conn.commit()
-    conn.close()
+    db = get_db()
+    if not db:
+        return
+    db.collection("generes_inteligents").document(nom_genere.lower().strip()).set({
+        "nom_genere": nom_genere.lower().strip(),
+        "estils": estils,
+        "seeds": seeds,
+        "color": color,
+        "icona": icona,
+        "data_creat": firestore.SERVER_TIMESTAMP
+    }, merge=True)
 
 def obtenir_generes_inteligents():
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT nom_genere, estils, seeds, color, icona FROM generes_inteligents ORDER BY nom_genere")
-    resultats = cursor.fetchall()
-    conn.close()
-    return resultats
+    db = get_db()
+    if not db:
+        return []
+    docs = db.collection("generes_inteligents").order_by("nom_genere").stream()
+    return [(d.to_dict().get("nom_genere"), d.to_dict().get("estils", ""), d.to_dict().get("seeds", ""), d.to_dict().get("color", "#00ff88"), d.to_dict().get("icona", "🎵")) for d in docs]
 
 def obtenir_genere_inteligent(nom_genere):
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT nom_genere, estils, seeds, color, icona FROM generes_inteligents WHERE LOWER(nom_genere) = LOWER(?)", (nom_genere,))
-    resultat = cursor.fetchone()
-    conn.close()
-    return resultat
+    db = get_db()
+    if not db:
+        return None
+    doc = db.collection("generes_inteligents").document(nom_genere.lower().strip()).get()
+    if doc.exists:
+        d = doc.to_dict()
+        return (d.get("nom_genere"), d.get("estils", ""), d.get("seeds", ""), d.get("color", "#00ff88"), d.get("icona", "🎵"))
+    return None
 
 def esborrar_genere_inteligent(nom_genere):
-    conn = db_conn()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM generes_inteligents WHERE LOWER(nom_genere) = LOWER(?)", (nom_genere,))
-    conn.commit()
-    conn.close()
+    db = get_db()
+    if not db:
+        return
+    db.collection("generes_inteligents").document(nom_genere.lower().strip()).delete()
 
 # ============================================================
-# 4. DICCIONARI PREDEFINITS
+# 5. DICCIONARI PREDEFINITS
 # ============================================================
 ESTILS_PREDEFINITS = {
     "makina": {"estils": "Makina, Hardcore espanyol, Pont Aeri, Xque", "seeds": "Pont Aeri, Pastis & Buenri, Ruboy, Xavi Metralla, Javi Boss, Skudero, DJ Nau, Xque, Sissu, Chimo Bayo", "color": "#ff0066", "icona": "🔥"},
@@ -292,7 +277,7 @@ SEEDS_GENERE = {
 LLISTA_NEGRA = ["tuyo", "rimsky-korsakov", "mussorgsky", "modest mussorgsky", "nikolai rimsky-korsakov"]
 
 # ============================================================
-# 5. MESOS I ANYS
+# 6. MESOS I ANYS
 # ============================================================
 MESES = {
     "gener": 1, "febrer": 2, "març": 3, "abril": 4, "maig": 5, "juny": 6,
@@ -305,7 +290,7 @@ MESES_NOMS = ["Indiferent", "Gener", "Febrer", "Març", "Abril", "Maig", "Juny",
 ANYS_DISPONIBLES = ["Indiferent"] + [str(a) for a in range(1950, 2027)]
 
 # ============================================================
-# 6. PARSEJAR ANY I MES
+# 7. PARSEJAR ANY I MES
 # ============================================================
 def parsejar_any_mes(any_input, mes_input):
     any_actual = datetime.now().year
@@ -345,7 +330,7 @@ def parsejar_any_mes(any_input, mes_input):
     return any_min, any_max, None, None
 
 # ============================================================
-# 7. DETECTAR ESTILS DE GENERE
+# 8. DETECTAR ESTILS DE GENERE
 # ============================================================
 def detectar_estils_genere(nom_genere):
     nom_lower = nom_genere.lower().strip()
@@ -426,17 +411,17 @@ def parsejar_llista_artistes(text_artistes):
 def guardar_llista_artistes_confirmats(artistes, genere):
     count = 0
     for artista in artistes:
-        guardar_artista_confirmat(artista, genere, subgenere=None, font="usuari", confiança="segur")
+        guardar_artista_confirmat(artista, genere, subgenere=None, font="usuari", confianza="segur")
         count += 1
     return count
 
 # ============================================================
-# 8. SISTEMA DE LOGS
+# 9. SISTEMA DE LOGS
 # ============================================================
 def init_console():
-    if 'console_logs' not in st.session_state:
+    if "console_logs" not in st.session_state:
         st.session_state.console_logs = []
-    if 'console_html' not in st.session_state:
+    if "console_html" not in st.session_state:
         st.session_state.console_html = ""
 
 def log(msg, level="info"):
@@ -477,7 +462,7 @@ def render_console():
     """, unsafe_allow_html=True)
 
 # ============================================================
-# 9. CREDENCIALS
+# 10. CREDENCIALS
 # ============================================================
 def carregar_credencials():
     creds = {"CLIENT_ID": "", "CLIENT_SECRET": "", "GROQ_KEY": "", "GROQ_URL": "", "DISCOGS_TOKEN": ""}
@@ -491,8 +476,8 @@ def carregar_credencials():
         pass
     if not creds["CLIENT_ID"] and os.path.exists(RUTA_API_SPOTIFY):
         try:
-            with open(RUTA_API_SPOTIFY, "r", encoding="utf-8") as f:
-                claus = re.findall(r'[a-f0-9]{32}', f.read())
+            with open(RUTA_API_SPOTIFY, "r", encoding="utf-8") as f2:
+                claus = re.findall(r"[a-f0-9]{32}", f2.read())
             if len(claus) >= 2:
                 creds["CLIENT_ID"] = claus[0]
                 creds["CLIENT_SECRET"] = claus[1]
@@ -500,8 +485,8 @@ def carregar_credencials():
             pass
     if not creds["GROQ_KEY"] and os.path.exists(RUTA_CONFIG_JSON):
         try:
-            with open(RUTA_CONFIG_JSON, "r", encoding="utf-8") as f:
-                config = json.load(f)
+            with open(RUTA_CONFIG_JSON, "r", encoding="utf-8") as f2:
+                config = json.load(f2)
             creds["GROQ_KEY"] = config.get("GROQ_KEY", "")
             creds["GROQ_URL"] = config.get("GROQ_URL", "")
             creds["DISCOGS_TOKEN"] = config.get("DISCOGS_TOKEN", "")
@@ -517,7 +502,7 @@ GROQ_URL = CREDS["GROQ_URL"]
 DISCOGS_TOKEN = CREDS["DISCOGS_TOKEN"]
 
 # ============================================================
-# 10. MODEL IA
+# 11. MODEL IA
 # ============================================================
 def obtenir_model_ia():
     if not GROQ_URL or not GROQ_KEY:
@@ -541,7 +526,7 @@ def obtenir_model_ia():
 MODEL_IA = obtenir_model_ia() if GROQ_KEY else None
 
 # ============================================================
-# 11. DETECTAR TIPUS DE CERCA
+# 12. DETECTAR TIPUS DE CERCA
 # ============================================================
 def detectar_tipus_cerca(any_triat, mes_triat="Indiferent"):
     any_actual = datetime.now().year
@@ -566,18 +551,18 @@ def detectar_tipus_cerca(any_triat, mes_triat="Indiferent"):
         return "classics"
 
 # ============================================================
-# 12. IA: TROBAR ARTISTES
+# 13. IA: TROBAR ARTISTES
 # ============================================================
 def trobar_artistes_passada1(estil, any_triat):
     if not GROQ_KEY or not GROQ_URL:
-        artistes_db = consultar_artistes_db(estil, min_confiança="probable")
+        artistes_db = consultar_artistes_db(estil, min_confianza="probable")
         if artistes_db:
             log(f"IA no disponible. Usant {len(artistes_db)} artistes de la DB", "warning")
-            return [(nom, sub) for nom, sub, conf in artistes_db]
+            return [(nom, sub) for nom, sub, conf, count in artistes_db]
         return []
 
     tipus_cerca = detectar_tipus_cerca(any_triat)
-    artistes_db = consultar_artistes_db(estil, min_confiança="probable")
+    artistes_db = consultar_artistes_db(estil, min_confianza="probable")
     rebutjats_db = consultar_rebutjats_db(estil)
 
     if artistes_db:
@@ -589,7 +574,7 @@ def trobar_artistes_passada1(estil, any_triat):
     context_db = ""
     if artistes_db:
         context_db = "ARTISTES JA CONEGUTS A LA BASE DE DADES (confirmats):\n"
-        for nom, sub, conf in artistes_db[:15]:
+        for nom, sub, conf, count in artistes_db[:15]:
             context_db += f"- {nom} ({sub}) [{conf}]\n"
     if rebutjats_db:
         context_db += "\nARTISTES QUE NO SON D'AQUEST ESTIL (rebutjats):\n"
@@ -637,7 +622,7 @@ Despres de revisar la llista... (frase massa llarga, PROHIBIT)"""
             if "SENSE_RESULTATS" in resposta or len(resposta) < 10:
                 log("IA no ha trobat artistes nous. Usant DB...", "warning")
                 if artistes_db:
-                    return [(nom, sub) for nom, sub, conf in artistes_db]
+                    return [(nom, sub) for nom, sub, conf, count in artistes_db]
                 seeds = obtenir_seeds_genere(estil)
                 if seeds:
                     log(f'Usant {len(seeds)} artistes seeds per "{estil}"', "info")
@@ -671,14 +656,14 @@ Despres de revisar la llista... (frase massa llarga, PROHIBIT)"""
             if artistes:
                 log(f"IA: Passada 1 -> {len(artistes)} artistes trobats", "success")
                 noms_nous = {a[0].lower() for a in artistes}
-                for nom, sub, conf in artistes_db:
+                for nom, sub, conf, count in artistes_db:
                     if nom.lower() not in noms_nous:
                         artistes.insert(0, (nom, sub))
                 return artistes
             else:
                 log("IA no ha retornat artistes valids. Usant DB...", "warning")
                 if artistes_db:
-                    return [(nom, sub) for nom, sub, conf in artistes_db]
+                    return [(nom, sub) for nom, sub, conf, count in artistes_db]
                 seeds = obtenir_seeds_genere(estil)
                 if seeds:
                     log(f'Usant {len(seeds)} artistes seeds per "{estil}"', "info")
@@ -689,12 +674,15 @@ Despres de revisar la llista... (frase massa llarga, PROHIBIT)"""
         log(f"Error IA passada 1: {e}", "error")
         if artistes_db:
             log("Error de IA. Usant artistes de la DB com a fallback", "warning")
-            return [(nom, sub) for nom, sub, conf in artistes_db]
+            return [(nom, sub) for nom, sub, conf, count in artistes_db]
         seeds = obtenir_seeds_genere(estil)
         if seeds:
             return [(s, "seed") for s in seeds]
         return []
 
+# ============================================================
+# 14. IA: VALIDAR ARTISTES
+# ============================================================
 def validar_artistes_passada2(artistes, estil, any_triat):
     if not artistes or not GROQ_KEY or not GROQ_URL:
         return [(nom, gen, "probable") for nom, gen in artistes]
@@ -735,7 +723,7 @@ Despres de revisar la llista... (frase explicativa, PROHIBIT)
             resposta = res.json()["choices"][0]["message"]["content"].strip()
 
             if "CAP_VALID" in resposta or len(resposta) < 10:
-                log("IA no ha validat cap artiste. Acceptant tots amb confiança probable...", "warning")
+                log("IA no ha validat cap artiste. Acceptant tots amb confianza probable...", "warning")
                 return [(nom, gen, "probable") for nom, gen in artistes]
 
             artistes_validats = []
@@ -785,7 +773,7 @@ Despres de revisar la llista... (frase explicativa, PROHIBIT)
         return [(nom, gen, "probable") for nom, gen in artistes]
 
 # ============================================================
-# 13. VALIDACIO DE SEGURETAT
+# 15. VALIDACIO DE SEGURETAT
 # ============================================================
 def validar_artista_seguretat(artista_nom):
     a_lower = artista_nom.lower()
@@ -811,7 +799,7 @@ def validar_canco_seguretat(canco, artista_nom):
     return True
 
 # ============================================================
-# 14. CERCA SPOTIFY AMB POPULARITAT, BPM, KEY
+# 16. CERCA SPOTIFY AMB POPULARITAT, BPM, KEY
 # ============================================================
 def obtenir_audio_features(sp, track_ids):
     features = {}
@@ -846,7 +834,7 @@ def key_to_string(key_num, mode_num):
     return key_str
 
 # ============================================================
-# 15. FUNCIONS DE CERCA AMB FIRMA CORRECTA
+# 17. FUNCIONS DE CERCA
 # ============================================================
 def cercar_spotify(sp, artista_nom, any_min, any_max, mes_min=None, mes_max=None, limit=20, tipus_cerca="novetats"):
     cancons = []
@@ -1028,7 +1016,7 @@ def cercar_deezer(artista_nom, any_min, any_max, mes_min=None, mes_max=None, lim
     return cancons
 
 # ============================================================
-# 16. UTILITATS AVANÇADES
+# 18. UTILITATS AVANÇADES
 # ============================================================
 def eliminar_duplicats(cancons):
     vistes = set()
@@ -1090,30 +1078,33 @@ def verificar_uris(sp, cancons):
     return verificades
 
 # ============================================================
-# 17. SESSION STATE
+# 19. SESSION STATE
 # ============================================================
-if 'cancons_reals' not in st.session_state:
+if "cancons_reals" not in st.session_state:
     st.session_state.cancons_reals = []
-if 'uris_spotify' not in st.session_state:
+if "uris_spotify" not in st.session_state:
     st.session_state.uris_spotify = []
-if 'text_copiar' not in st.session_state:
+if "text_copiar" not in st.session_state:
     st.session_state.text_copiar = ""
-if 'titol_playlist' not in st.session_state:
+if "titol_playlist" not in st.session_state:
     st.session_state.titol_playlist = "Nova Playlist"
-if 'input_estil' not in st.session_state:
+if "input_estil" not in st.session_state:
     st.session_state.input_estil = "Makina"
-if 'genere_aprendre_seleccionat' not in st.session_state:
+if "genere_aprendre_seleccionat" not in st.session_state:
     st.session_state.genere_aprendre_seleccionat = "Makina"
-if 'artistes_aprendre_text' not in st.session_state:
-                    st.session_state["ta_artistes_aprendre"] = ""
-if 'artistes_processats_feedback' not in st.session_state:
+if "ta_artistes_aprendre" not in st.session_state:
+    st.session_state["ta_artistes_aprendre"] = ""
+if "artistes_processats_feedback" not in st.session_state:
     st.session_state.artistes_processats_feedback = set()
-if 'feedback_timestamp' not in st.session_state:
+if "feedback_timestamp" not in st.session_state:
     st.session_state.feedback_timestamp = 0
-if 'artistes_ultima_cerca' not in st.session_state:
+if "artistes_ultima_cerca" not in st.session_state:
     st.session_state.artistes_ultima_cerca = []
+if "aprendre_key_counter" not in st.session_state:
+    st.session_state.aprendre_key_counter = 0
+
 # ============================================================
-# 18. INTERFICIE PRINCIPAL
+# 20. INTERFICIE PRINCIPAL
 # ============================================================
 if CLIENT_ID and CLIENT_SECRET:
     try:
@@ -1125,25 +1116,25 @@ if CLIENT_ID and CLIENT_SECRET:
         usuari_sp = sp.current_user()
         log(f"Connectat: {usuari_sp['display_name']}", "success")
 
-        # ===== CAPÇALERA =====
+        init_firebase()
+
         st.markdown("""
         <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px; padding: 15px; background: linear-gradient(90deg, #1a1a2e 0%, #16213e 100%); border-radius: 10px; border: 1px solid #333;">
             <div style="font-size: 32px;">🎛️</div>
             <div>
                 <div style="font-size: 24px; font-weight: bold; color: #00ff88;">Rastrejador de Novetats Reals</div>
-                <div style="font-size: 14px; color: #888;">Spotify: <span style="color: #1DB954;">●</span> {usuari} | IA: {model} | Discogs: {discogs}</div>
+                <div style="font-size: 14px; color: #888;">Spotify: <span style="color: #1DB954;">●</span> {usuari} | IA: {model} | Discogs: {discogs} | DB: Firebase</div>
             </div>
             <div style="margin-left: auto; background: #0a0a0a; padding: 5px 15px; border-radius: 20px; border: 1px solid #333;">
-                <span style="color: #00ff88; font-weight: bold; font-size: 12px;">📦 v2.0.0</span>
+                <span style="color: #00ff88; font-weight: bold; font-size: 12px;">📦 v2.0.0-Firebase</span>
             </div>
         </div>
         """.format(
-            usuari=usuari_sp['display_name'],
+            usuari=usuari_sp["display_name"],
             model=MODEL_IA or "No disponible",
             discogs="Actiu" if DISCOGS_TOKEN else "Sense token"
         ), unsafe_allow_html=True)
 
-        # ===== PESTANYES =====
         tab_cercar, tab_aprendre = st.tabs(["🔍 Cercar Cançons", "🎓 Aprendre"])
 
         # ========================================================
@@ -1159,7 +1150,6 @@ if CLIENT_ID and CLIENT_SECRET:
                 </div>
                 """, unsafe_allow_html=True)
 
-                # Selector de genere guardat per a la cerca
                 generes_guardats_cercar = obtenir_tots_generes_db()
                 if generes_guardats_cercar:
                     col_estil1, col_estil2 = st.columns([2, 1])
@@ -1173,13 +1163,11 @@ if CLIENT_ID and CLIENT_SECRET:
                 else:
                     estil_triat = st.text_input("Estil / Genere:", value=st.session_state.input_estil, key="input_estil_cercar_fallback")
 
-                # Selectors de mes i any
                 col_mes, col_any = st.columns(2)
                 with col_mes:
                     mes_triat = st.selectbox("Mes:", MESES_NOMS, index=0, key="sel_mes_cercar")
                 with col_any:
                     any_triat = st.selectbox("Any:", ANYS_DISPONIBLES, index=len(ANYS_DISPONIBLES)-2, key="sel_any_cercar")
-                    # Opcio de rang manual
                     any_manual = st.text_input("O rang (Ex: 2025/2026):", "", key="input_any_manual_cercar", help="Deixa en blanc per usar el selector d'any")
                     if any_manual.strip():
                         any_triat = any_manual.strip()
@@ -1217,9 +1205,9 @@ if CLIENT_ID and CLIENT_SECRET:
                     btn_rastreig = st.button("🔍 Comencar Rastreig", key="btn_rastreig", use_container_width=True)
                 with col_refrescar:
                     if st.button("🔄 Refrescar Artistes DB", key="btn_refrescar_db", use_container_width=True):
-                        artistes_db = consultar_artistes_db(estil_triat, min_confiança=min_conf)
+                        artistes_db = consultar_artistes_db(estil_triat, min_confianza=min_conf)
                         if artistes_db:
-                            st.session_state.artistes_ultima_cerca = [(nom, sub, conf) for nom, sub, conf in artistes_db]
+                            st.session_state.artistes_ultima_cerca = [(nom, sub, conf) for nom, sub, conf, count in artistes_db]
                             log(f"Refrescat: {len(artistes_db)} artistes de la DB per '{estil_triat}'", "success")
                             st.success(f"🔄 {len(artistes_db)} artistes carregats de la base de dades!")
                         else:
@@ -1236,7 +1224,6 @@ if CLIENT_ID and CLIENT_SECRET:
                 if btn_rastreig:
                     log(f"Rastreig: {estil_triat} | {any_triat} | {quantitat} cancons", "info")
 
-                    # Parsejem any i mes
                     if any_triat == "Indiferent":
                         any_min_r, any_max_r, mes_min_r, mes_max_r = parsejar_any_mes("Indiferent", mes_triat)
                     else:
@@ -1267,12 +1254,12 @@ if CLIENT_ID and CLIENT_SECRET:
 
                             totes_cancons = []
 
-                            for artista_nom, artista_genere, confiança in artistes_validats:
+                            for artista_nom, artista_genere, confianza in artistes_validats:
                                 if not validar_artista_seguretat(artista_nom):
                                     log(f"Artista descartat (llista negra): {artista_nom}", "warning")
                                     continue
 
-                                log(f"Cercant: {artista_nom} ({artista_genere}) [{confiança}]...", "info")
+                                log(f"Cercant: {artista_nom} ({artista_genere}) [{confianza}]...", "info")
 
                                 cancons_spotify = cercar_spotify(sp, artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=10, tipus_cerca=tipus_cerca)
                                 cancons_discogs = cercar_discogs(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=10, tipus_cerca=tipus_cerca)
@@ -1338,7 +1325,6 @@ if CLIENT_ID and CLIENT_SECRET:
                             actualitzar_estadistiques_genere(estil_triat)
 
             with col_dreta:
-                # Feedback d'artistes
                 if st.session_state.artistes_ultima_cerca:
                     st.markdown("""
                     <div style="background: #1a1a2e; padding: 10px 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #f59e0b;">
@@ -1351,19 +1337,16 @@ if CLIENT_ID and CLIENT_SECRET:
                     for a, g, c in st.session_state.artistes_ultima_cerca:
                         if a in st.session_state.artistes_processats_feedback:
                             continue
-                        conn_fb = db_conn()
-                        cursor_fb = conn_fb.cursor()
-                        cursor_fb.execute("SELECT 1 FROM artistes_rebutjats WHERE nom = ? AND genere = ?", (a, estil_triat))
-                        es_rebutjat = cursor_fb.fetchone() is not None
-                        cursor_fb.execute("SELECT confiança FROM artistes_confirmats WHERE nom = ? AND genere = ?", (a, estil_triat))
-                        fila = cursor_fb.fetchone()
-                        conn_fb.close()
-                        if es_rebutjat:
-                            st.session_state.artistes_processats_feedback.add(a)
-                            continue
-                        if fila and fila[0] == "segur":
-                            st.session_state.artistes_processats_feedback.add(a)
-                            continue
+                        db_fb = get_db()
+                        if db_fb:
+                            doc_reb = db_fb.collection("artistes_rebutjats").document(f"{a.lower().strip()}_{estil_triat.lower().strip()}").get()
+                            if doc_reb.exists:
+                                st.session_state.artistes_processats_feedback.add(a)
+                                continue
+                            doc_conf = db_fb.collection("artistes_confirmats").document(f"{a.lower().strip()}_{estil_triat.lower().strip()}").get()
+                            if doc_conf.exists and doc_conf.to_dict().get("confianza") == "segur":
+                                st.session_state.artistes_processats_feedback.add(a)
+                                continue
                         artistes_pendents.append((a, g, c))
 
                     if not artistes_pendents:
@@ -1388,7 +1371,6 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 st.divider()
 
-                # Resultats
                 if st.session_state.cancons_reals:
                     st.markdown(f"""
                     <div style="background: #1a1a2e; padding: 10px 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #3b82f6;">
@@ -1421,9 +1403,9 @@ if CLIENT_ID and CLIENT_SECRET:
                             if st.button("Crear Playlist", key="btn_crear", use_container_width=True):
                                 try:
                                     log(f"Creant '{nom_llista}'...", "info")
-                                    pl = sp.user_playlist_create(user=usuari_sp['id'], name=nom_llista, public=True)
+                                    pl = sp.user_playlist_create(user=usuari_sp["id"], name=nom_llista, public=True)
                                     for i in range(0, len(st.session_state.uris_spotify), 100):
-                                        sp.playlist_add_items(playlist_id=pl['id'], items=st.session_state.uris_spotify[i:i+100])
+                                        sp.playlist_add_items(playlist_id=pl["id"], items=st.session_state.uris_spotify[i:i+100])
                                     log(f"Playlist creada!", "success")
                                     st.success(f"Playlist '{nom_llista}' creada!")
                                     st.link_button("Obrir Playlist", pl["external_urls"]["spotify"])
@@ -1435,7 +1417,7 @@ if CLIENT_ID and CLIENT_SECRET:
                     with col2:
                         st.text_area("Copiar llista:", value=st.session_state.text_copiar, height=120, key="ta_copiar")
                         if st.button("Exportar CSV", key="btn_csv"):
-                            csv = df.to_csv(index=False, encoding='utf-8-sig')
+                            csv = df.to_csv(index=False, encoding="utf-8-sig")
                             st.download_button(label="Descarregar CSV", data=csv, file_name=f"{st.session_state.titol_playlist}.csv", mime="text/csv", key="btn_download")
                             log("CSV exportat", "success")
 
@@ -1444,12 +1426,11 @@ if CLIENT_ID and CLIENT_SECRET:
         # ========================================================
         with tab_aprendre:
             st.header("🎓 Ensenyar Artistes al Programa")
-            st.write("Introdueix una llista d'artistes d'un estil concret. El programa els guardarà a la base de dades per usar-los en futures cerques.")
+            st.write("Introdueix una llista d'artistes d'un estil concret. El programa els guardarà a Firebase per usar-los en futures cerques.")
 
             col_a1, col_a2 = st.columns([2, 1])
 
             with col_a1:
-                # Fila amb input + desplegable (sense boto dinamic)
                 tots_generes = obtenir_tots_generes_db()
 
                 col_gen1, col_gen2 = st.columns([2, 1])
@@ -1462,52 +1443,54 @@ if CLIENT_ID and CLIENT_SECRET:
                         genere_seleccionat = st.selectbox("Guardats:", ["-- Nou --"] + tots_generes, key="sel_genere_guardat_aprendre")
                         if genere_seleccionat != "-- Nou --":
                             st.session_state.genere_aprendre_seleccionat = genere_seleccionat
-                            st.session_state['ta_artistes_aprendre'] = '\n'.join([a[0] for a in obtenir_artistes_per_genere(genere_seleccionat)]) if obtenir_artistes_per_genere(genere_seleccionat) else ''
-                            st.rerun()
+                            artistes_del_genere = obtenir_artistes_per_genere(genere_seleccionat)
+                            nou_text = "\n".join([a[0] for a in artistes_del_genere]) if artistes_del_genere else ""
+                            if st.session_state.get("ta_artistes_aprendre", "") != nou_text:
+                                st.session_state["ta_artistes_aprendre"] = nou_text
+                                st.session_state.aprendre_key_counter = st.session_state.get("aprendre_key_counter", 0) + 1
+                                st.rerun()
                     else:
                         st.caption("Sense generes")
 
                 if tots_generes:
-                    st.caption(f"📚 Generes a la DB: {', '.join(tots_generes)}")
+                    st.caption(f"📚 Generes a Firebase: {', '.join(tots_generes)}")
 
-                st.text_area(
+                ta_key = f"ta_artistes_aprendre_{st.session_state.get('aprendre_key_counter', 0)}"
+                artistes_text = st.text_area(
                     "Llista d'artistes (un per linia):",
+                    value=st.session_state.get("ta_artistes_aprendre", ""),
                     height=300,
-                    key="ta_artistes_aprendre"
+                    key=ta_key
                 )
-                artistes_text = st.session_state.get("ta_artistes_aprendre", "")
+                st.session_state["ta_artistes_aprendre"] = artistes_text
 
-
-                # Botó per buidar el camp
                 if st.button("🗑️ Buidar Camp", key="btn_buidar_camp", use_container_width=True):
                     st.session_state["ta_artistes_aprendre"] = ""
+                    st.session_state.aprendre_key_counter = st.session_state.get("aprendre_key_counter", 0) + 1
                     st.rerun()
 
                 col_btn1, col_btn2, col_btn3 = st.columns(3)
 
                 with col_btn1:
-                    if st.button("💾 Guardar a la DB", key="btn_guardar_aprendre", use_container_width=True):
+                    if st.button("💾 Guardar a Firebase", key="btn_guardar_aprendre", use_container_width=True):
                         if artistes_text.strip() and genere_aprendre.strip():
                             artistes_parsed = parsejar_llista_artistes(artistes_text)
                             if artistes_parsed:
                                 count = guardar_llista_artistes_confirmats(artistes_parsed, genere_aprendre)
 
-                                # Guardem també el genere intel·ligent
                                 info_genere = detectar_estils_genere(genere_aprendre)
                                 seeds_text = ", ".join(artistes_parsed[:15]) if artistes_parsed else info_genere["seeds"]
                                 guardar_genere_inteligent(
-                                    genere_aprendre, 
+                                    genere_aprendre,
                                     estils=info_genere["estils"],
                                     seeds=seeds_text,
                                     color=info_genere["color"],
                                     icona=info_genere["icona"]
                                 )
 
-                                log(f"Guardats {count} artistes a la DB com a '{genere_aprendre}'", "success")
-                                st.success(f"✅ {count} artistes guardats a la base de dades com a '{genere_aprendre}'!")
-                                # Actualitzem session_state amb els valors actuals
+                                log(f"Guardats {count} artistes a Firebase com a '{genere_aprendre}'", "success")
+                                st.success(f"✅ {count} artistes guardats a Firebase com a '{genere_aprendre}'!")
                                 st.session_state.genere_aprendre_seleccionat = genere_aprendre
-                                # Camp mantingut per si l'usuari vol guardar més artistes del mateix genere
                                 st.balloons()
                             else:
                                 st.warning("No s'han trobat noms d'artistes al text.")
@@ -1516,13 +1499,12 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 with col_btn2:
                     if st.button("📋 Veure Artistes Guardats", key="btn_veure_aprendre", use_container_width=True):
-                        artistes_db = consultar_artistes_db(genere_aprendre, min_confiança="probable")
+                        artistes_db = consultar_artistes_db(genere_aprendre, min_confianza="probable")
                         if artistes_db:
-                            st.info(f"**Artistes a la DB per \'{genere_aprendre}\':**\n\n" + "\n".join([f"• {a} ({g}) [{c}]" for a, g, c in artistes_db]))
+                            st.info(f"**Artistes a Firebase per '{genere_aprendre}':**\n\n" + "\n".join([f"• {a} ({g}) [{c}]" for a, g, c, count in artistes_db]))
                         else:
-                            st.info(f"No hi ha artistes a la DB per \'{genere_aprendre}\' encara.")
+                            st.info(f"No hi ha artistes a Firebase per '{genere_aprendre}' encara.")
 
-                        # Mostrem també tots els generes disponibles
                         tots_g = obtenir_tots_generes_db()
                         if tots_g:
                             st.markdown("**📚 Tots els generes guardats:**")
@@ -1532,17 +1514,9 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 with col_btn3:
                     if st.button("🗑️ Esborrar Genere", key="btn_esborrar_aprendre", use_container_width=True):
-                        conn = db_conn()
-                        cursor = conn.cursor()
-                        cursor.execute("DELETE FROM artistes_confirmats WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
-                        cursor.execute("DELETE FROM artistes_rebutjats WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
-                        cursor.execute("DELETE FROM cancons_confirmades WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
-                        cursor.execute("DELETE FROM generes_apresos WHERE LOWER(nom_genere) = LOWER(?)", (genere_aprendre,))
-                        cursor.execute("DELETE FROM generes_inteligents WHERE LOWER(nom_genere) = LOWER(?)", (genere_aprendre,))
-                        conn.commit()
-                        conn.close()
-                        log(f"Genere \'{genere_aprendre}\' esborrat de la DB", "warning")
-                        st.warning(f"🗑️ Genere \'{genere_aprendre}\' esborrat de la base de dades.")
+                        esborrar_genere(genere_aprendre)
+                        log(f"Genere '{genere_aprendre}' esborrat de Firebase", "warning")
+                        st.warning(f"🗑️ Genere '{genere_aprendre}' esborrat de Firebase.")
 
             with col_a2:
                 st.subheader("📊 Estadistiques")
