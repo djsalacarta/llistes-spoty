@@ -616,9 +616,9 @@ REGLAS ESTRICTES:
 2. FORMAT OBLIGATORI per cada linia: NOM_ARTISTE | GENERE_PRINCIPAL
 3. NO escriguis frases explicatives ni numeros de llista.
 4. DESCARTA AUTOMATICAMENT qualsevol artista que no toqui aquest subgenere exacte.
-5. Maxim 50 artistes."""
+5. Maxim 80 artistes."""
 
-    data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 1500}
+    data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 2000}
 
     try:
         res = requests.post(GROQ_URL, headers=headers, json=data, timeout=20)
@@ -1196,10 +1196,13 @@ if CLIENT_ID and CLIENT_SECRET:
                 with col_any:
                     any_triat = st.selectbox("Any:", ANYS_DISPONIBLES, index=len(ANYS_DISPONIBLES)-2, key="sel_any")
                     any_manual = st.text_input("O rang (Ex: 2025/2026):", "", key="input_any_manual")
+                    
                     if any_manual.strip():
-                        any_triat = any_manual.strip()
+                        any_cerca = any_manual.strip()
+                    else:
+                        any_cerca = any_triat
 
-                tipus_detectat = detectar_tipus_cerca(any_triat, mes_triat)
+                tipus_detectat = detectar_tipus_cerca(any_cerca, mes_triat)
                 if tipus_detectat == "novetats":
                     st.info("🔴 Mode NOVETATS actiu")
                 else:
@@ -1214,7 +1217,7 @@ if CLIENT_ID and CLIENT_SECRET:
                 with col_q:
                     quantitat = st.number_input("Cançons objectiu:", min_value=10, max_value=300, value=100, step=10, key="input_quantitat")
                 
-                max_per_artista = st.number_input("Max cançons per artista:", min_value=1, max_value=15, value=5, step=1, key="input_max_artista")
+                max_per_artista = st.number_input("Max cançons per artista:", min_value=1, max_value=30, value=10, step=1, key="input_max_artista")
                 
                 ordenacio = st.selectbox("Ordenar per:", ["popularitat", "bpm", "any", "aleatori"], index=0, key="sel_ordenacio")
                 min_conf = st.selectbox("Min confiança DB:", ["segur", "probable", "dubtos"], index=1, key="sel_conf")
@@ -1233,7 +1236,7 @@ if CLIENT_ID and CLIENT_SECRET:
                             st.session_state.artistes_ultima_cerca = []
                         st.rerun()
 
-                # === ESPAI DINÀMIC PER A LA CONSOLA (Matrix Style) ===
+                # === ESPAI DINÀMIC PER A LA CONSOLA ===
                 consola_placeholder = st.empty()
                 with consola_placeholder:
                     render_console()
@@ -1243,19 +1246,18 @@ if CLIENT_ID and CLIENT_SECRET:
                     st.rerun()
 
                 if btn_rastreig:
-                    any_min_r, any_max_r, mes_min_r, mes_max_r = parsejar_any_mes(any_triat, mes_triat)
-                    tipus_cerca = detectar_tipus_cerca(any_triat, mes_triat)
+                    any_min_r, any_max_r, mes_min_r, mes_max_r = parsejar_any_mes(any_cerca, mes_triat)
 
                     with st.status("🚀 Iniciant rastreig musical...", expanded=True) as status:
                         
                         status.update(label="🧠 1/4: Consultant IA per trobar artistes...", state="running")
-                        artistes_passada1 = trobar_artistes_passada1(estil_triat, any_triat, referencia_triada)
+                        artistes_passada1 = trobar_artistes_passada1(estil_triat, any_cerca, referencia_triada)
                         
                         if not artistes_passada1:
                             status.update(label="❌ Error: La IA no ha trobat artistes.", state="error")
                             st.error("La IA no ha pogut identificar artistes.")
                         else:
-                            artistes_validats = validar_artistes_passada2(artistes_passada1, estil_triat, any_triat)
+                            artistes_validats = validar_artistes_passada2(artistes_passada1, estil_triat, any_cerca)
                             
                             st.session_state.artistes_processats_feedback = set()
                             st.session_state.feedback_timestamp = time.time()
@@ -1266,10 +1268,11 @@ if CLIENT_ID and CLIENT_SECRET:
                                 if not validar_artista_seguretat(artista_nom):
                                     continue
 
-                                cancons_spotify = cercar_spotify(sp, artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
-                                cancons_discogs = cercar_discogs(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
-                                cancons_mb = cercar_musicbrainz(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
-                                cancons_deezer = cercar_deezer(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
+                                # HEM PUJAT EL LIMIT DE CERCA A 40 PER GARANTIR VOLUM BRUT
+                                cancons_spotify = cercar_spotify(sp, artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=40, tipus_cerca=tipus_detectat)
+                                cancons_discogs = cercar_discogs(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=30, tipus_cerca=tipus_detectat)
+                                cancons_mb = cercar_musicbrainz(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=20, tipus_cerca=tipus_detectat)
+                                cancons_deezer = cercar_deezer(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=30, tipus_cerca=tipus_detectat)
 
                                 totes_cancons.extend(cancons_spotify + cancons_discogs + cancons_mb + cancons_deezer)
 
@@ -1277,7 +1280,7 @@ if CLIENT_ID and CLIENT_SECRET:
                             cancons_limitades = limitar_cancons_per_artista(cancons_uniques, max_per_artista)
                             cancons_ordenades = ordenar_cancons_intelligent(cancons_limitades, ordenacio)
                             
-                            status.update(label=f"⚙️ 3/4: Analitzant BPMs i filtrant (Motor Híbrid Anti-Ban)...", state="running")
+                            status.update(label=f"⚙️ 3/4: Analitzant BPMs i filtrant (Motor Híbrid)...", state="running")
                             
                             barra_progres = st.progress(0)
                             text_progres = st.empty()
@@ -1298,13 +1301,16 @@ if CLIENT_ID and CLIENT_SECRET:
                                     percentatge_actual = int((len(cancons_100x100_pures) / quantitat) * 100)
                                     text_progres.markdown(f"**Progrés:** {percentatge_actual}% - 🔍 Analitzant: *{c['artista']} - {c['titol']}*")
                                     
-                                    # Extracció Híbrida i Log Dinàmic
                                     if c["bpm"] == "N/D":
                                         c["bpm"] = obtenir_bpm_hibrid(c["artista"], c["titol"])
                                         
                                         if c["bpm"] != "N/D":
                                             log(f"⚡ BPM Trobat: {c['artista']} - {c['titol']} -> {c['bpm']}", "info")
-                                        
+                                        else:
+                                            # LA REGLA DE SALVACIÓ: Si és N/D no el descartem, confiem en la IA.
+                                            log(f"⚠️ Sense BPM exacte: {c['artista']} - {c['titol']} (Acceptada per IA)", "warning")
+                                            cancons_100x100_pures.append(c)
+                                            
                                         with consola_placeholder:
                                             render_console()
                                         
@@ -1319,7 +1325,8 @@ if CLIENT_ID and CLIENT_SECRET:
                                             with consola_placeholder:
                                                 render_console()
                                         except ValueError:
-                                            pass
+                                            # Si no es pot convertir a float però no és N/D, s'accepta per no perdre-la
+                                            cancons_100x100_pures.append(c)
                                             
                                     prog = min(1.0, len(cancons_100x100_pures) / quantitat)
                                     barra_progres.progress(prog)
@@ -1364,9 +1371,8 @@ if CLIENT_ID and CLIENT_SECRET:
                             st.session_state.cancons_reals = processades
                             st.session_state.uris_spotify = uris
                             st.session_state.text_copiar = text
-                            st.session_state.titol_playlist = f"{estil_triat} ({any_triat})"
+                            st.session_state.titol_playlist = f"{estil_triat} ({any_cerca})"
                             
-                            # === NOU BUGFIX: NOMÉS ELS ARTISTES PURS AL FEEDBACK ===
                             artistes_finals_reals = set(c["ARTISTA"] for c in processades)
                             artistes_per_feedback = []
                             for nom, gen, conf in artistes_validats:
