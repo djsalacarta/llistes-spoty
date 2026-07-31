@@ -23,144 +23,276 @@ REDIRECT_URI = "http://127.0.0.1:8501"
 st.set_page_config(page_title="Rastrejador de Novetats Reals v2.0.0", page_icon="🎛️", layout="wide")
 
 # ============================================================
-# 2. BASE DE DADES FIREBASE (APRENENTATGE IMMORTAL AL NÚVOL)
+# 2. BASE DE DADES FIREBASE
 # ============================================================
-@st.cache_resource
-def init_firebase():
-    if not firebase_admin._apps:
-        try:
-            if "firebase" in st.secrets:
-                fb_creds = dict(st.secrets["firebase"])
-                if "private_key" in fb_creds:
-                    fb_creds["private_key"] = fb_creds["private_key"].replace('\\n', '\n')
-                cred = credentials.Certificate(fb_creds)
-                firebase_admin.initialize_app(cred)
-            else:
-                st.error("No s'han trobat les credencials de [firebase] a secrets.toml")
-                return None
-        except Exception as e:
-            st.error(f"Error connectant a Firebase: {e}")
-            return None
-    return firestore.client()
+# Només inicialitzem Firebase si no s'ha fet abans
+if not firebase_admin._apps:
+    try:
+        # AQUESTA ÉS LA RUTA AL TEU FITXER DE CREDENCIALS DE FIREBASE.
+        # ASSEGURA'T DE CANVIAR-LA SI EL TENS EN UNA ALTRA UBICACIÓ.
+        cred = credentials.Certificate(r"D:\Programa llistes Spoty\firebase_credentials.json")
+        firebase_admin.initialize_app(cred)
+    except Exception as e:
+        st.error(f"Error inicialitzant Firebase: {e}")
 
-db = init_firebase()
+# Obtenim el client de Firestore
+db = firestore.client() if firebase_admin._apps else None
+
 
 def consultar_artistes_db(genere, min_confiança="probable"):
     if not db: return []
-    mapping = {'segur': 1, 'probable': 2, 'dubtos': 3}
-    min_nivell = mapping.get(min_confiança, 2)
-    docs = db.collection('artistes_confirmats').where('genere_lower', '==', genere.lower()).stream()
-    resultats = []
-    for doc in docs:
-        d = doc.to_dict()
-        conf = d.get('confiança', 'probable')
-        if mapping.get(conf, 3) <= min_nivell:
-            resultats.append({'nom': d.get('nom'), 'subgenere': d.get('subgenere') or 'desconegut', 'confiança': conf, 'cerca_count': d.get('cerca_count', 1)})
-    resultats.sort(key=lambda x: (mapping.get(x['confiança'], 3), -x['cerca_count']))
-    return [(r['nom'], r['subgenere'], r['confiança']) for r in resultats]
+    try:
+        # Firestore no permet cerca "case-insensitive" fàcilment en consultes bàsiques.
+        # Per això guardarem el gènere en minúscules sempre.
+        genere_lower = genere.lower()
+        docs = db.collection("artistes_confirmats").where("genere_lower", "==", genere_lower).get()
+        
+        mapping = {'segur': 1, 'probable': 2, 'dubtos': 3}
+        min_nivell = mapping.get(min_confiança, 2)
+        filtrats = []
+        
+        for doc in docs:
+            data = doc.to_dict()
+            nivell = mapping.get(data.get("confiança", "dubtos"), 3)
+            if nivell <= min_nivell:
+                # Firestore retorna l'objecte data directament
+                filtrats.append((
+                    data.get("nom", ""), 
+                    data.get("subgenere", "desconegut"), 
+                    data.get("confiança", "dubtos"),
+                    data.get("cerca_count", 1)
+                ))
+                
+        # Ordenem en memòria: primer els més segurs, després per comptador
+        filtrats.sort(key=lambda x: (mapping.get(x[2], 3), -x[3]))
+        
+        # Retornem només els 3 primers elements com feia la teva funció original
+        return [(f[0], f[1], f[2]) for f in filtrats]
+    except Exception as e:
+        print(f"Error a consultar_artistes_db: {e}")
+        return []
 
 def consultar_rebutjats_db(genere):
     if not db: return set()
-    docs = db.collection('artistes_rebutjats').where('genere_lower', '==', genere.lower()).stream()
-    return {doc.to_dict().get('nom') for doc in docs}
+    try:
+        genere_lower = genere.lower()
+        docs = db.collection("artistes_rebutjats").where("genere_lower", "==", genere_lower).get()
+        return {doc.to_dict().get("nom", "") for doc in docs}
+    except Exception:
+        return set()
 
 def guardar_artista_confirmat(nom, genere, subgenere=None, font="IA", confiança="probable"):
     if not db: return
-    doc_id = f"{nom.lower()}_{genere.lower()}".replace(" ", "_").replace("/", "_").replace(".", "")
-    doc_ref = db.collection('artistes_confirmats').document(doc_id)
-    doc = doc_ref.get()
-    if doc.exists:
-        data = doc.to_dict()
-        nova_conf = 'segur' if confiança == 'segur' else data.get('confiança', confiança)
-        doc_ref.update({'cerca_count': data.get('cerca_count', 1) + 1, 'confiança': nova_conf, 'data_afegit': firestore.SERVER_TIMESTAMP})
-    else:
-        doc_ref.set({'nom': nom, 'genere': genere, 'genere_lower': genere.lower(), 'subgenere': subgenere, 'font': font, 'confiança': confiança, 'cerca_count': 1, 'data_afegit': firestore.SERVER_TIMESTAMP})
+    try:
+        # Creem un ID únic combinant nom i gènere per evitar duplicats (substitueix l'UNIQUE de SQLite)
+        doc_id = f"{nom.lower().replace(' ', '_')}_{genere.lower().replace(' ', '_')}"
+        doc_ref = db.collection("artistes_confirmats").document(doc_id)
+        
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+            nova_conf = 'segur' if confiança == 'segur' else data.get('confiança')
+            doc_ref.update({
+                "cerca_count": firestore.Increment(1),
+                "confiança": nova_conf,
+                "data_afegit": firestore.SERVER_TIMESTAMP
+            })
+        else:
+            doc_ref.set({
+                "nom": nom,
+                "genere": genere,
+                "genere_lower": genere.lower(),
+                "subgenere": subgenere,
+                "font": font,
+                "confiança": confiança,
+                "cerca_count": 1,
+                "data_afegit": firestore.SERVER_TIMESTAMP
+            })
+    except Exception as e:
+        print(f"Error a guardar_artista_confirmat: {e}")
 
 def guardar_artista_rebutjat(nom, genere, motiu="No es del genere"):
     if not db: return
-    doc_id = f"{nom.lower()}_{genere.lower()}".replace(" ", "_").replace("/", "_").replace(".", "")
-    db.collection('artistes_rebutjats').document(doc_id).set({'nom': nom, 'genere': genere, 'genere_lower': genere.lower(), 'motiu': motiu, 'data_rebutjat': firestore.SERVER_TIMESTAMP}, merge=True)
+    try:
+        doc_id = f"{nom.lower().replace(' ', '_')}_{genere.lower().replace(' ', '_')}"
+        doc_ref = db.collection("artistes_rebutjats").document(doc_id)
+        # Només el guardem si no existeix (equival a INSERT OR IGNORE)
+        if not doc_ref.get().exists:
+            doc_ref.set({
+                "nom": nom,
+                "genere": genere,
+                "genere_lower": genere.lower(),
+                "motiu": motiu,
+                "data_rebutjat": firestore.SERVER_TIMESTAMP
+            })
+    except Exception:
+        pass
 
 def guardar_canco_confirmada(titol, artista, genere, any_ll, bpm=None, clau=None, popularitat=None, font="Spotify", spotify_uri=None):
     if not db: return
-    doc_id = f"{titol.lower()}_{artista.lower()}_{genere.lower()}".replace(" ", "_").replace("/", "_").replace(".", "")
-    db.collection('cancons_confirmades').document(doc_id).set({'titol': titol, 'artista': artista, 'genere': genere, 'genere_lower': genere.lower(), 'any_ll': any_ll, 'bpm': bpm, 'clau': clau, 'popularitat': popularitat, 'font': font, 'spotify_uri': spotify_uri, 'data_afegit': firestore.SERVER_TIMESTAMP}, merge=True)
+    try:
+        # ID únic basat en títol, artista i gènere
+        doc_id = f"{titol.lower().replace(' ', '_')}_{artista.lower().replace(' ', '_')}_{genere.lower().replace(' ', '_')}"
+        doc_ref = db.collection("cancons_confirmades").document(doc_id)
+        
+        if not doc_ref.get().exists:
+            doc_ref.set({
+                "titol": titol,
+                "artista": artista,
+                "genere": genere,
+                "any_ll": any_ll,
+                "bpm": bpm,
+                "clau": clau,
+                "popularitat": popularitat,
+                "font": font,
+                "spotify_uri": spotify_uri,
+                "data_afegit": firestore.SERVER_TIMESTAMP
+            })
+    except Exception:
+        pass
 
 def actualitzar_estadistiques_genere(genere):
     if not db: return
     try:
-        art_docs = len(list(db.collection('artistes_confirmats').where('genere_lower', '==', genere.lower()).stream()))
-        can_docs = len(list(db.collection('cancons_confirmades').where('genere_lower', '==', genere.lower()).stream()))
-        db.collection('generes_apresos').document(genere.lower()).set({'nom_genere': genere, 'total_artistes': art_docs, 'total_cancons': can_docs, 'ultima_actualitzacio': firestore.SERVER_TIMESTAMP}, merge=True)
-    except Exception:
-        pass
+        genere_lower = genere.lower()
+        
+        # Firestore no té un COUNT(*) ràpid com SQLite que no costi lectures, 
+        # però per aplicacions petites això funciona.
+        artistes_docs = db.collection("artistes_confirmats").where("genere_lower", "==", genere_lower).get()
+        total_art = len(artistes_docs)
+        
+        cancons_docs = db.collection("cancons_confirmades").where("genere", "==", genere).get()
+        total_can = len(cancons_docs)
+        
+        doc_ref = db.collection("generes_apresos").document(genere_lower)
+        doc_ref.set({
+            "nom_genere": genere,
+            "total_artistes": total_art,
+            "total_cancons": total_can,
+            "ultima_actualitzacio": firestore.SERVER_TIMESTAMP
+        }, merge=True) # merge=True actua com l'ON CONFLICT DO UPDATE
+    except Exception as e:
+        print(f"Error a actualitzar_estadistiques_genere: {e}")
 
 def obtenir_estadistiques_db():
     if not db: 
         return {"artistes_confirmats": 0, "artistes_rebutjats": 0, "cancons_confirmades": 0, "generes_apresos": 0, "top_generes": []}
+    
     try:
-        tot_art = len(list(db.collection('artistes_confirmats').stream()))
-        tot_reb = len(list(db.collection('artistes_rebutjats').stream()))
-        tot_can = len(list(db.collection('cancons_confirmades').stream()))
-        tot_gen = len(list(db.collection('generes_apresos').stream()))
-        top_g = []
-        docs = db.collection('generes_apresos').order_by('total_artistes', direction=firestore.Query.DESCENDING).limit(5).stream()
-        for d in docs:
-            dd = d.to_dict()
-            top_g.append((dd.get('nom_genere'), dd.get('total_artistes'), dd.get('total_cancons')))
-        return {"artistes_confirmats": tot_art, "artistes_rebutjats": tot_reb, "cancons_confirmades": tot_can, "generes_apresos": tot_gen, "top_generes": top_g}
+        # Compte: En Firestore, obtenir tots els documents d'una col·lecció només per comptar-los pot ser lent si hi ha milers.
+        total_conf = len(db.collection("artistes_confirmats").get())
+        total_reb = len(db.collection("artistes_rebutjats").get())
+        total_can = len(db.collection("cancons_confirmades").get())
+        
+        generes_docs = db.collection("generes_apresos").get()
+        total_gen = len(generes_docs)
+        
+        # Firestore permet order_by i limit
+        top_generes_docs = db.collection("generes_apresos").order_by("total_artistes", direction=firestore.Query.DESCENDING).limit(5).get()
+        top_generes = [(doc.to_dict().get("nom_genere"), doc.to_dict().get("total_artistes"), doc.to_dict().get("total_cancons")) for doc in top_generes_docs]
+        
+        return {
+            "artistes_confirmats": total_conf, "artistes_rebutjats": total_reb,
+            "cancons_confirmades": total_can, "generes_apresos": total_gen,
+            "top_generes": top_generes
+        }
     except Exception:
         return {"artistes_confirmats": 0, "artistes_rebutjats": 0, "cancons_confirmades": 0, "generes_apresos": 0, "top_generes": []}
 
 def obtenir_tots_generes_db():
     if not db: return []
-    generes = set()
-    docs1 = db.collection('generes_apresos').stream()
-    for d in docs1: generes.add(d.to_dict().get('nom_genere'))
-    docs2 = db.collection('artistes_confirmats').stream()
-    for d in docs2: generes.add(d.to_dict().get('genere'))
-    return sorted(list(generes), key=str.lower)
+    try:
+        tots = {}
+        
+        # Obtenim gèneres apresos
+        docs_apresos = db.collection("generes_apresos").get()
+        for doc in docs_apresos:
+            data = doc.to_dict()
+            nom = data.get("nom_genere")
+            if nom: tots[nom.lower()] = nom
+            
+        # Obtenim gèneres dels artistes confirmats (només per garantir completesa)
+        docs_artistes = db.collection("artistes_confirmats").get()
+        for doc in docs_artistes:
+            genere = doc.to_dict().get("genere")
+            if genere and genere.lower() not in tots:
+                tots[genere.lower()] = genere
+                
+        return sorted(tots.values(), key=str.lower)
+    except Exception:
+        return []
 
 def obtenir_artistes_per_genere(genere):
     if not db: return []
-    docs = db.collection('artistes_confirmats').where('genere_lower', '==', genere.lower()).stream()
-    res = []
-    for d in docs:
-        dd = d.to_dict()
-        res.append((dd.get('nom'), dd.get('subgenere'), dd.get('confiança'), dd.get('cerca_count', 1)))
-    res.sort(key=lambda x: x[0].lower())
-    return res
+    try:
+        genere_lower = genere.lower()
+        # En Firestore no podem ordenar fàcilment de manera case-insensitive, així que ordenem en memòria
+        docs = db.collection("artistes_confirmats").where("genere_lower", "==", genere_lower).get()
+        
+        resultats = []
+        for doc in docs:
+            data = doc.to_dict()
+            resultats.append((
+                data.get("nom", ""),
+                data.get("subgenere", "desconegut"),
+                data.get("confiança", "dubtos"),
+                data.get("cerca_count", 1)
+            ))
+            
+        # Ordenem alfabèticament pel nom
+        resultats.sort(key=lambda x: x[0].lower())
+        return resultats
+    except Exception:
+        return []
+
 
 # ============================================================
 # FUNCIONS INTEL·LIGENTS PER GÈNERES
 # ============================================================
 def guardar_genere_inteligent(nom_genere, estils="", seeds="", color="#00ff88", icona="🎵"):
     if not db: return
-    doc_id = nom_genere.lower().strip()
-    db.collection('generes_inteligents').document(doc_id).set({
-        'nom_genere': doc_id, 'estils': estils, 'seeds': seeds, 'color': color, 'icona': icona
-    }, merge=True)
+    try:
+        doc_id = nom_genere.lower().strip()
+        doc_ref = db.collection("generes_inteligents").document(doc_id)
+        
+        # Utilitzem set amb merge=True per fer l'equivalent a ON CONFLICT DO UPDATE
+        doc_ref.set({
+            "nom_genere": nom_genere,
+            "estils": estils,
+            "seeds": seeds,
+            "color": color,
+            "icona": icona
+        }, merge=True)
+    except Exception as e:
+        print(f"Error a guardar_genere_inteligent: {e}")
 
 def obtenir_generes_inteligents():
     if not db: return []
-    docs = db.collection('generes_inteligents').stream()
-    res = []
-    for d in docs:
-        dd = d.to_dict()
-        res.append((dd.get('nom_genere'), dd.get('estils'), dd.get('seeds'), dd.get('color'), dd.get('icona')))
-    return sorted(res, key=lambda x: x[0])
+    try:
+        docs = db.collection("generes_inteligents").order_by("nom_genere").get()
+        return [(doc.to_dict().get("nom_genere"), doc.to_dict().get("estils"), doc.to_dict().get("seeds"), doc.to_dict().get("color"), doc.to_dict().get("icona")) for doc in docs]
+    except Exception:
+        return []
 
 def obtenir_genere_inteligent(nom_genere):
     if not db: return None
-    doc = db.collection('generes_inteligents').document(nom_genere.lower().strip()).get()
-    if doc.exists:
-        dd = doc.to_dict()
-        return (dd.get('nom_genere'), dd.get('estils'), dd.get('seeds'), dd.get('color'), dd.get('icona'))
-    return None
+    try:
+        doc_id = nom_genere.lower().strip()
+        doc = db.collection("generes_inteligents").document(doc_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            return (data.get("nom_genere"), data.get("estils"), data.get("seeds"), data.get("color"), data.get("icona"))
+        return None
+    except Exception:
+        return None
 
 def esborrar_genere_inteligent(nom_genere):
     if not db: return
-    db.collection('generes_inteligents').document(nom_genere.lower().strip()).delete()
+    try:
+        doc_id = nom_genere.lower().strip()
+        db.collection("generes_inteligents").document(doc_id).delete()
+    except Exception:
+        pass
 
 ESTILS_PREDEFINITS = {
     "makina": {"estils": "Makina, Hardcore espanyol, Pont Aeri, Xque", "seeds": "Pont Aeri, Pastis & Buenri, Ruboy, Xavi Metralla, Javi Boss, Skudero, DJ Nau, Xque, Sissu, Chimo Bayo", "color": "#ff0066", "icona": "🔥"},
@@ -555,6 +687,18 @@ TASCA VITAL:
     except Exception:
         return list(artistes_finals)
 
+def validar_artistes_passada2(artistes_passada1, estil, any_cerca):
+    """
+    Com que el Super-Motor Híbrid ja ha fet la feina pesada a la passada 1 
+    buscant a la DB i a Spotify, aquesta funció simplement formata els 
+    resultats afegint-hi el nivell de confiança perquè el cercador els pugui processar.
+    """
+    artistes_finals = []
+    for nom, genere in artistes_passada1:
+        # Els assignem 'probable' per defecte perquè la IA els ha validat
+        artistes_finals.append((nom, genere, "probable"))
+    return artistes_finals
+
 # ============================================================
 # 8. VALIDACIO DE SEGURETAT
 # ============================================================
@@ -574,14 +718,27 @@ def validar_canco_seguretat(canco, artista_nom):
         if neg in artista_canco:
             return False
             
-    # 2. Coincidència estricta de nom (Spotify a vegades retorna pop comercial si no troba el DJ)
-    # Exigim que el nom del DJ que hem buscat formi part obligatòriament de l'autor de la cançó.
+    # 2. Coincidència estricta de nom o nom curt (Exigència total)
     if a_lower in artista_canco or artista_canco in a_lower:
         return True
+    if len(artista_nom) <= 4 and artista_canco == a_lower:
+        return True
         
-    # 3. ELIMINACIÓ IMPLACABLE: Si el nom no coincideix, és brossa de l'algoritme de Spotify.
     return False
 
+def validar_canco_seguretat(canco, artista_nom):
+    artista_canco = canco["artista"].lower()
+    a_lower = artista_nom.lower()
+    for neg in LLISTA_NEGRA:
+        if neg in artista_canco:
+            return False
+    if a_lower in artista_canco or artista_canco in a_lower:
+        return True
+    if len(artista_nom) <= 4:
+        if artista_canco == a_lower:
+            return True
+        return False
+    return True
 
 # ============================================================
 # 9. CERCA SPOTIFY / DISCOGS / DEEZER AMB FILTRES DE MES
@@ -980,15 +1137,15 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 with col_btn3:
                     if st.button("🗑️ Esborrar Genere", key="btn_esborrar_aprendre", use_container_width=True):
-                        if db:
-                            for col in ['artistes_confirmats', 'artistes_rebutjats', 'cancons_confirmades']:
-                                docs = db.collection(col).where('genere_lower', '==', genere_aprendre.lower()).stream()
-                                for doc in docs:
-                                    doc.reference.delete()
-                            
-                            db.collection('generes_apresos').document(genere_aprendre.lower()).delete()
-                            st.warning(f"🗑️ Genere \"{genere_aprendre}\" esborrat completament de Firebase.")
-                            st.rerun()
+                        conn = db_conn()
+                        cursor = conn.cursor()
+                        cursor.execute("DELETE FROM artistes_confirmats WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
+                        cursor.execute("DELETE FROM artistes_rebutjats WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
+                        cursor.execute("DELETE FROM cancons_confirmades WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
+                        cursor.execute("DELETE FROM generes_apresos WHERE LOWER(nom_genere) = LOWER(?)", (genere_aprendre,))
+                        conn.commit()
+                        conn.close()
+                        st.warning(f"🗑️ Genere \"{genere_aprendre}\" esborrat.")
 
             with col_a2:
                 st.subheader("📊 Estadistiques")
