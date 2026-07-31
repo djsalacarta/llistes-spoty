@@ -580,7 +580,7 @@ def detectar_tipus_cerca(any_triat, mes_triat="Indiferent"):
 # ============================================================
 # 7. IA: TROBAR ARTISTES
 # ============================================================
-def trobar_artistes_passada1(estil, any_triat):
+def trobar_artistes_passada1(estil, any_triat, referencia=""):
     if not GROQ_KEY or not GROQ_URL:
         artistes_db = consultar_artistes_db(estil, min_confiança="probable")
         if artistes_db:
@@ -594,21 +594,25 @@ def trobar_artistes_passada1(estil, any_triat):
     headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
     context_db = ""
     if artistes_db:
-        context_db = "ARTISTES JA CONEGUTS A LA BASE DE DADES (confirmats):\n"
+        context_db = "ARTISTES JA CONEGUTS A LA BASE DE DADES:\n"
         for nom, sub, conf in artistes_db[:15]:
             context_db += f"- {nom} ({sub}) [{conf}]\n"
     if rebutjats_db:
-        context_db += "\nARTISTES QUE NO SON D'AQUEST ESTIL (rebutjats):\n"
+        context_db += "\nARTISTES REBUTJATS (NO els incloguis):\n"
         for nom in list(rebutjats_db)[:10]:
             context_db += f"- {nom}\n"
 
     if tipus_cerca == "novetats":
         instruccions_any = f"L'usuari busca NOVETATS de l'any {any_triat}. Troba artistes actius que publiquin musica nova."
     else:
-        instruccions_any = f"L'usuari busca CLASSICS/TOP de l'any/periode {any_triat}. Troba artistes classics i emblematics."
+        instruccions_any = f"L'usuari busca CLASSICS/TOP de l'any {any_triat}. Troba artistes classics i emblematics."
 
-    prompt = f"""Ets un expert musical purista. L'usuari busca musica EXACTA de l'estil/referència: "{estil}"
+    context_ref = ""
+    if referencia.strip():
+        context_ref = f"\nATENCIÓ! L'usuari ha indicat una REFERÈNCIA CLAU: '{referencia}'. És OBLIGATORI trobar productors/artistes que facin EXACTAMENT aquest mateix so musical.\n"
 
+    prompt = f"""Ets un expert musical purista. L'usuari busca musica EXACTA de l'estil: "{estil}"
+{context_ref}
 {context_db}
 
 {instruccions_any}
@@ -617,10 +621,10 @@ REGLAS ESTRICTES:
 1. Respon NOMES amb noms d'ARTISTES REALS, un per linia.
 2. FORMAT OBLIGATORI per cada linia: NOM_ARTISTE | GENERE_PRINCIPAL
 3. NO escriguis frases explicatives ni numeros de llista.
-4. DESCARTA AUTOMATICAMENT qualsevol artista que no toqui aquest subgenere exacte (tol·lerància zero a fusions).
+4. DESCARTA AUTOMATICAMENT qualsevol artista que no toqui aquest subgenere exacte.
 5. Maxim 50 artistes."""
 
-    data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 1500}
+    data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 1500}
 
     try:
         res = requests.post(GROQ_URL, headers=headers, json=data, timeout=20)
@@ -721,7 +725,6 @@ REGLAS ESTRICTES:
         return [(nom, gen, "probable") for nom, gen in artistes]
     except Exception:
         return [(nom, gen, "probable") for nom, gen in artistes]
-
 # ============================================================
 # 8. VALIDACIO DE SEGURETAT
 # ============================================================
@@ -771,6 +774,38 @@ def obtenir_audio_features(sp, track_ids):
             pass
         time.sleep(0.1)
     return features
+
+def obtenir_bpm_hibrid(artista, titol):
+    """Motor híbrid per trobar el BPM esquivant el bloqueig de Spotify"""
+    # 1. Intent Deezer (Bona cobertura per electrònica i general)
+    try:
+        url_search = f"https://api.deezer.com/search?q=artist:\"{artista}\" track:\"{titol}\"&limit=1"
+        res = requests.get(url_search, timeout=2)
+        if res.status_code == 200:
+            data = res.json().get("data", [])
+            if data:
+                track_id = data[0]["id"]
+                url_track = f"https://api.deezer.com/track/{track_id}"
+                res_track = requests.get(url_track, timeout=2)
+                if res_track.status_code == 200:
+                    bpm = res_track.json().get("bpm", 0)
+                    if bpm > 0:
+                        return round(bpm, 1)
+    except Exception:
+        pass
+
+    # 2. Intent iTunes API (Excel·lent per Salsa, Rock, Pop comercial)
+    try:
+        url_itunes = f"https://itunes.apple.com/search?term={requests.utils.quote(artista + ' ' + titol)}&entity=song&limit=1"
+        res = requests.get(url_itunes, timeout=2)
+        if res.status_code == 200:
+            results = res.json().get("results", [])
+            if results and "bpm" in results[0]:
+                return round(results[0]["bpm"], 1)
+    except Exception:
+        pass
+        
+    return "N/D"
 
 def key_to_string(key_num, mode_num):
     keys = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -1257,38 +1292,67 @@ if CLIENT_ID and CLIENT_SECRET:
 
                         cancons_uniques = eliminar_duplicats(totes_cancons)
                         
-                        # === FILTRE ESTRICTE BPM PASSADA 1 ===
-                        cancons_filtrades_bpm = []
-                        for c in cancons_uniques:
-                            try:
-                                if c["bpm"] == "N/D":
-                                    cancons_filtrades_bpm.append(c)
-                                elif bpm_min <= float(c["bpm"]) <= bpm_max:
-                                    cancons_filtrades_bpm.append(c)
-                            except ValueError:
-                                cancons_filtrades_bpm.append(c)
-
-                        cancons_limitades = limitar_cancons_per_artista(cancons_filtrades_bpm, max_per_artista)
+                        # Ordenem primer per popularitat o novetat abans d'analitzar
+                        cancons_limitades = limitar_cancons_per_artista(cancons_uniques, max_per_artista)
                         cancons_ordenades = ordenar_cancons_intelligent(cancons_limitades, ordenacio)
                         
-                        cancons_finals = cancons_ordenades[:quantitat]
-
-                        cancons_verificades = verificar_uris(sp, cancons_finals)
+                        # === NOU MOTOR DE FILTRATGE HÍBRID ANTI-BAN (Per Lots) ===
+                        st.markdown("### ⚙️ Analitzant BPMs i filtrant morralla (Mode Anti-Ban)...")
+                        barra_progres = st.progress(0)
+                        text_progres = st.empty()
+                        text_lot = st.empty()
                         
-                        # === FILTRE ESTRICTE BPM PASSADA 2 (Un cop verificat Spotify) ===
                         cancons_100x100_pures = []
-                        for c in cancons_verificades:
-                            try:
-                                if c["bpm"] != "N/D" and not (bpm_min <= float(c["bpm"]) <= bpm_max):
-                                    continue
-                                cancons_100x100_pures.append(c)
-                            except ValueError:
-                                cancons_100x100_pures.append(c)
+                        mida_lot = 10 # Processarem de 10 en 10
                         
+                        for i in range(0, len(cancons_ordenades), mida_lot):
+                            # Parem immediatament quan arribem a l'objectiu
+                            if len(cancons_100x100_pures) >= quantitat:
+                                break
+                                
+                            lot_actual = cancons_ordenades[i:i + mida_lot]
+                            text_lot.write(f"📦 Processant lot {i//mida_lot + 1}...")
+                            
+                            for c in lot_actual:
+                                if len(cancons_100x100_pures) >= quantitat:
+                                    break
+                                    
+                                text_progres.write(f"🔍 Extraient BPM: **{c['artista']} - {c['titol']}** (Pures trobades: {len(cancons_100x100_pures)}/{quantitat})")
+                                
+                                # Si no té BPM, disparem el motor Híbrid
+                                if c["bpm"] == "N/D":
+                                    c["bpm"] = obtenir_bpm_hibrid(c["artista"], c["titol"])
+                                    
+                                # FILTRE ESTRICTE: Mirem si quadra. Si no, a les escombraries.
+                                if c["bpm"] != "N/D":
+                                    try:
+                                        if bpm_min <= float(c["bpm"]) <= bpm_max:
+                                            cancons_100x100_pures.append(c)
+                                    except ValueError:
+                                        pass
+                                        
+                                # Actualitzem barra visual
+                                prog = min(1.0, len(cancons_100x100_pures) / quantitat)
+                                barra_progres.progress(prog)
+                                time.sleep(0.1) # Petita pausa micro-segon entre cançó
+                            
+                            # === RESPIRACIÓ ANTI-BAN (Només si no hem acabat) ===
+                            if len(cancons_100x100_pures) < quantitat and (i + mida_lot) < len(cancons_ordenades):
+                                text_lot.write("⏱️ Pausa de seguretat de 2 segons per no saturar l'API...")
+                                time.sleep(2.0)
+                            
+                        text_progres.empty()
+                        text_lot.empty()
+                        barra_progres.empty()
+                        
+                        # Un cop tenim les cançons pures, verifiquem els URIs de Spotify perquè la playlist funcioni
+                        cancons_finals_verificades = verificar_uris(sp, cancons_100x100_pures)
+                        
+                        # GENERACIÓ FINAL I GUARDAT
                         processades = []
                         uris = []
                         text = ""
-                        for idx, c in enumerate(cancons_100x100_pures, 1):
+                        for idx, c in enumerate(cancons_finals_verificades, 1):
                             processades.append({
                                 "NUM": idx, "ARTISTA": c["artista"], "TITOL": c["titol"],
                                 "BPM": c["bpm"], "CLAU": c["clau"], "ANY": c["any"],
@@ -1296,8 +1360,10 @@ if CLIENT_ID and CLIENT_SECRET:
                                 "ESTIL": estil_triat, "FONT": c["font"],
                                 "SPOTIFY": c.get("spotify_link") or "No trobat"
                             })
+                            
                             if c.get("spotify_uri"):
                                 uris.append(c["spotify_uri"])
+                                
                             text += f"{idx}. {c['artista']} - {c['titol']} ({c['any']}) [BPM:{c['bpm']}]\n"
 
                             guardar_canco_confirmada(
@@ -1308,12 +1374,12 @@ if CLIENT_ID and CLIENT_SECRET:
                                 c["font"], c.get("spotify_uri")
                             )
 
+                        # ACTUALITZACIÓ DEL SESSION STATE
                         st.session_state.cancons_reals = processades
                         st.session_state.uris_spotify = uris
                         st.session_state.text_copiar = text
                         st.session_state.titol_playlist = f"{estil_triat} ({any_triat})"
                         actualitzar_estadistiques_genere(estil_triat)
-
             with col_dreta:
                 if st.session_state.artistes_ultima_cerca:
                     st.markdown("""
