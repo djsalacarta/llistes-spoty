@@ -479,14 +479,23 @@ def render_console():
 # ============================================================
 def carregar_credencials():
     creds = {"CLIENT_ID": "", "CLIENT_SECRET": "", "GROQ_KEY": "", "GROQ_URL": "", "DISCOGS_TOKEN": ""}
+    
+    # 1. Intentar llegir des de Streamlit Cloud (secrets.toml)
     try:
-        creds["CLIENT_ID"] = st.secrets.get("SPOTIFY_CLIENT_ID", "")
-        creds["CLIENT_SECRET"] = st.secrets.get("SPOTIFY_CLIENT_SECRET", "")
-        creds["GROQ_KEY"] = st.secrets.get("GROQ_KEY", "")
-        creds["GROQ_URL"] = st.secrets.get("GROQ_URL", "")
-        creds["DISCOGS_TOKEN"] = st.secrets.get("DISCOGS_TOKEN", "")
+        if "spotify" in st.secrets:
+            creds["CLIENT_ID"] = st.secrets["spotify"].get("client_id", "")
+            creds["CLIENT_SECRET"] = st.secrets["spotify"].get("client_secret", "")
+        
+        if "groq" in st.secrets:
+            creds["GROQ_KEY"] = st.secrets["groq"].get("key", "")
+            creds["GROQ_URL"] = st.secrets["groq"].get("url", "")
+            
+        if "discogs" in st.secrets:
+            creds["DISCOGS_TOKEN"] = st.secrets["discogs"].get("token", "")
     except Exception:
         pass
+
+    # 2. Fallback per si ho executes al teu PC local
     if not creds["CLIENT_ID"] and os.path.exists(RUTA_API_SPOTIFY):
         try:
             with open(RUTA_API_SPOTIFY, "r", encoding="utf-8") as f:
@@ -496,6 +505,7 @@ def carregar_credencials():
                 creds["CLIENT_SECRET"] = claus[1]
         except Exception:
             pass
+            
     if not creds["GROQ_KEY"] and os.path.exists(RUTA_CONFIG_JSON):
         try:
             with open(RUTA_CONFIG_JSON, "r", encoding="utf-8") as f:
@@ -505,6 +515,7 @@ def carregar_credencials():
             creds["DISCOGS_TOKEN"] = config.get("DISCOGS_TOKEN", "")
         except Exception:
             pass
+            
     return creds
 
 CREDS = carregar_credencials()
@@ -596,20 +607,18 @@ def trobar_artistes_passada1(estil, any_triat):
     else:
         instruccions_any = f"L'usuari busca CLASSICS/TOP de l'any/periode {any_triat}. Troba artistes classics i emblematics."
 
-    prompt = f"""Ets un expert musical. L'usuari busca musica de l'estil: "{estil}"
+    prompt = f"""Ets un expert musical purista. L'usuari busca musica EXACTA de l'estil/referència: "{estil}"
 
 {context_db}
 
 {instruccions_any}
 
 REGLAS ESTRICTES:
-1. Respon NOMES amb noms d'ARTISTES REALS, una per linia.
+1. Respon NOMES amb noms d'ARTISTES REALS, un per linia.
 2. FORMAT OBLIGATORI per cada linia: NOM_ARTISTE | GENERE_PRINCIPAL
-3. NO escriguis frases explicatives, introduccions ni conclusions.
-4. NO escriguis numeros de llista (1., 2., etc).
-5. NO escriguis mes de 5 paraules per nom d'artista.
-6. Si no coneixes artistes d'aquest estil, respon: SENSE_RESULTATS
-7. Maxim 25 artistes."""
+3. NO escriguis frases explicatives ni numeros de llista.
+4. DESCARTA AUTOMATICAMENT qualsevol artista que no toqui aquest subgenere exacte (tol·lerància zero a fusions).
+5. Maxim 50 artistes."""
 
     data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 1500}
 
@@ -1168,18 +1177,18 @@ if CLIENT_ID and CLIENT_SECRET:
                     mes_triat = st.selectbox("Mes:", MESES_NOMS, index=0, key="sel_mes")
                 with col_any:
                     any_triat = st.selectbox("Any:", ANYS_DISPONIBLES, index=len(ANYS_DISPONIBLES)-2, key="sel_any")
-                    any_manual = st.text_input("O rang (Ex: 2025/2026):", "", key="input_any_manual")
-                    if any_manual.strip():
-                        any_triat = any_manual.strip()
-
-                tipus_detectat = detectar_tipus_cerca(any_triat, mes_triat)
-                if tipus_detectat == "novetats":
-                    st.info("🔴 Mode NOVETATS actiu")
-                else:
-                    st.info("🟢 Mode CLASSICS actiu")
-
-                quantitat = st.number_input("Cancons a trobar:", min_value=10, max_value=200, value=100, step=10, key="input_quantitat")
-                max_per_artista = st.number_input("Max per artista:", min_value=1, max_value=10, value=3, step=1, key="input_max_artista")
+                    
+                # NOUS FILTRES ESTRICTES
+                st.markdown("**Filtres Físics (Anti-Morralla):**")
+                col_bpm1, col_bpm2, col_q = st.columns(3)
+                with col_bpm1:
+                    bpm_min = st.number_input("BPM Mínim:", min_value=60, max_value=250, value=140, step=1)
+                with col_bpm2:
+                    bpm_max = st.number_input("BPM Màxim:", min_value=60, max_value=250, value=170, step=1)
+                with col_q:
+                    quantitat = st.number_input("Cançons objectiu:", min_value=10, max_value=300, value=100, step=10)
+                
+                max_per_artista = st.number_input("Max cançons per artista (puja'l si no arribes a l'objectiu):", min_value=1, max_value=15, value=5, step=1)
                 ordenacio = st.selectbox("Ordenar per:", ["popularitat", "bpm", "any", "aleatori"], index=0, key="sel_ordenacio")
                 min_conf = st.selectbox("Min confiança DB:", ["segur", "probable", "dubtos"], index=1, key="sel_conf")
 
@@ -1220,24 +1229,53 @@ if CLIENT_ID and CLIENT_SECRET:
                             if not validar_artista_seguretat(artista_nom):
                                 continue
 
-                            cancons_spotify = cercar_spotify(sp, artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=10, tipus_cerca=tipus_cerca)
-                            cancons_discogs = cercar_discogs(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=10, tipus_cerca=tipus_cerca)
-                            cancons_mb = cercar_musicbrainz(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=10, tipus_cerca=tipus_cerca)
-                            cancons_deezer = cercar_deezer(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=10, tipus_cerca=tipus_cerca)
+                            # Cerquem a totes les fonts amb un limit més alt (15) per compensar els futurs descarts
+                            cancons_spotify = cercar_spotify(sp, artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
+                            cancons_discogs = cercar_discogs(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
+                            cancons_mb = cercar_musicbrainz(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
+                            cancons_deezer = cercar_deezer(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
 
                             totes_cancons.extend(cancons_spotify + cancons_discogs + cancons_mb + cancons_deezer)
 
+                        # ELIMINACIÓ DE DUPLICATS
                         cancons_uniques = eliminar_duplicats(totes_cancons)
-                        cancons_limitades = limitar_cancons_per_artista(cancons_uniques, max_per_artista)
+                        
+                        # PRIMER FILTRE STRICTE DE BPM
+                        cancons_filtrades_bpm = []
+                        for c in cancons_uniques:
+                            try:
+                                # Si no té BPM, el deixem passar temporalment (fonts com Discogs o MB poden no tenir-lo d'inici)
+                                if c["bpm"] == "N/D":
+                                    cancons_filtrades_bpm.append(c)
+                                elif bpm_min <= float(c["bpm"]) <= bpm_max:
+                                    cancons_filtrades_bpm.append(c)
+                            except ValueError:
+                                cancons_filtrades_bpm.append(c)
+
+                        cancons_limitades = limitar_cancons_per_artista(cancons_filtrades_bpm, max_per_artista)
                         cancons_ordenades = ordenar_cancons_intelligent(cancons_limitades, ordenacio)
+                        
+                        # Ens quedem amb la quantitat objectiu (ex: 100) abans de verificar URIs per no saturar l'API
                         cancons_finals = cancons_ordenades[:quantitat]
 
+                        # Obtenim els URIs i audios features finals de Spotify si falten
                         cancons_verificades = verificar_uris(sp, cancons_finals)
-
+                        
+                        # SEGON FILTRE STRICTE DE BPM (Passada de seguretat final un cop verificades les URIs)
+                        cancons_100x100_pures = []
+                        for c in cancons_verificades:
+                            try:
+                                if c["bpm"] != "N/D" and not (bpm_min <= float(c["bpm"]) <= bpm_max):
+                                    continue # Es descarta definitivament si el BPM no quadra
+                                cancons_100x100_pures.append(c)
+                            except ValueError:
+                                cancons_100x100_pures.append(c)
+                        
+                        # GENERACIÓ FINAL I GUARDAT
                         processades = []
                         uris = []
                         text = ""
-                        for idx, c in enumerate(cancons_verificades, 1):
+                        for idx, c in enumerate(cancons_100x100_pures, 1):
                             processades.append({
                                 "NUM": idx, "ARTISTA": c["artista"], "TITOL": c["titol"],
                                 "BPM": c["bpm"], "CLAU": c["clau"], "ANY": c["any"],
@@ -1245,8 +1283,10 @@ if CLIENT_ID and CLIENT_SECRET:
                                 "ESTIL": estil_triat, "FONT": c["font"],
                                 "SPOTIFY": c.get("spotify_link") or "No trobat"
                             })
+                            
                             if c.get("spotify_uri"):
                                 uris.append(c["spotify_uri"])
+                                
                             text += f"{idx}. {c['artista']} - {c['titol']} ({c['any']}) [BPM:{c['bpm']}]\n"
 
                             guardar_canco_confirmada(
@@ -1257,6 +1297,7 @@ if CLIENT_ID and CLIENT_SECRET:
                                 c["font"], c.get("spotify_uri")
                             )
 
+                        # ACTUALITZACIÓ DEL SESSION STATE PER MOSTRAR A LA INTERFÍCIE
                         st.session_state.cancons_reals = processades
                         st.session_state.uris_spotify = uris
                         st.session_state.text_copiar = text
