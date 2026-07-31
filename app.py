@@ -753,27 +753,8 @@ def validar_canco_seguretat(canco, artista_nom):
 # 9. CERCA SPOTIFY / DISCOGS / DEEZER AMB FILTRES DE MES
 # ============================================================
 def obtenir_audio_features(sp, track_ids):
-    features = {}
-    if not track_ids:
-        return features
-    for i in range(0, len(track_ids), 100):
-        batch = track_ids[i:i+100]
-        try:
-            result = sp.audio_features(batch)
-            for f in result:
-                if f:
-                    features[f["id"]] = {
-                        "bpm": round(f["tempo"], 1) if f["tempo"] else None,
-                        "key": f["key"],
-                        "mode": f["mode"],
-                        "energy": f["energy"],
-                        "danceability": f["danceability"],
-                        "duration_ms": f["duration_ms"]
-                    }
-        except Exception:
-            pass
-        time.sleep(0.1)
-    return features
+    # Apaguem la petició a Spotify per evitar l'error 403 i que l'app es pengi
+    return {}
 
 def obtenir_bpm_hibrid(artista, titol):
     """Motor híbrid per trobar el BPM esquivant el bloqueig de Spotify"""
@@ -1267,119 +1248,116 @@ if CLIENT_ID and CLIENT_SECRET:
                     any_min_r, any_max_r, mes_min_r, mes_max_r = parsejar_any_mes(any_triat, mes_triat)
                     tipus_cerca = detectar_tipus_cerca(any_triat, mes_triat)
 
-                    # === PASSEM LA REFERÈNCIA A LA IA ===
-                    artistes_passada1 = trobar_artistes_passada1(estil_triat, any_triat, referencia_triada)
-                    
-                    if not artistes_passada1:
-                        st.error("La IA no ha pogut identificar artistes.")
-                    else:
-                        artistes_validats = validar_artistes_passada2(artistes_passada1, estil_triat, any_triat)
-                        st.session_state.artistes_ultima_cerca = artistes_validats
-                        st.session_state.artistes_processats_feedback = set()
-                        st.session_state.feedback_timestamp = time.time()
-
-                        totes_cancons = []
-                        for artista_nom, artista_genere, confiança in artistes_validats:
-                            if not validar_artista_seguretat(artista_nom):
-                                continue
-
-                            cancons_spotify = cercar_spotify(sp, artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
-                            cancons_discogs = cercar_discogs(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
-                            cancons_mb = cercar_musicbrainz(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
-                            cancons_deezer = cercar_deezer(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
-
-                            totes_cancons.extend(cancons_spotify + cancons_discogs + cancons_mb + cancons_deezer)
-
-                        cancons_uniques = eliminar_duplicats(totes_cancons)
+                    # === PANELL VISUAL D'ESTAT ===
+                    with st.status("🚀 Iniciant rastreig musical...", expanded=True) as status:
                         
-                        # Ordenem primer per popularitat o novetat abans d'analitzar
-                        cancons_limitades = limitar_cancons_per_artista(cancons_uniques, max_per_artista)
-                        cancons_ordenades = ordenar_cancons_intelligent(cancons_limitades, ordenacio)
+                        status.update(label="🧠 1/4: Consultant IA per trobar artistes...", state="running")
+                        artistes_passada1 = trobar_artistes_passada1(estil_triat, any_triat, referencia_triada)
                         
-                        # === NOU MOTOR DE FILTRATGE HÍBRID ANTI-BAN (Per Lots) ===
-                        st.markdown("### ⚙️ Analitzant BPMs i filtrant morralla (Mode Anti-Ban)...")
-                        barra_progres = st.progress(0)
-                        text_progres = st.empty()
-                        text_lot = st.empty()
-                        
-                        cancons_100x100_pures = []
-                        mida_lot = 10 # Processarem de 10 en 10
-                        
-                        for i in range(0, len(cancons_ordenades), mida_lot):
-                            # Parem immediatament quan arribem a l'objectiu
-                            if len(cancons_100x100_pures) >= quantitat:
-                                break
-                                
-                            lot_actual = cancons_ordenades[i:i + mida_lot]
-                            text_lot.write(f"📦 Processant lot {i//mida_lot + 1}...")
+                        if not artistes_passada1:
+                            status.update(label="❌ Error: La IA no ha trobat artistes.", state="error")
+                            st.error("La IA no ha pogut identificar artistes.")
+                        else:
+                            artistes_validats = validar_artistes_passada2(artistes_passada1, estil_triat, any_triat)
+                            st.session_state.artistes_ultima_cerca = artistes_validats
+                            st.session_state.artistes_processats_feedback = set()
+                            st.session_state.feedback_timestamp = time.time()
+
+                            status.update(label=f"🌐 2/4: Rastrejant {len(artistes_validats)} artistes a les bases de dades (Spotify, Discogs, Deezer)...", state="running")
+                            totes_cancons = []
+                            for artista_nom, artista_genere, confiança in artistes_validats:
+                                if not validar_artista_seguretat(artista_nom):
+                                    continue
+
+                                cancons_spotify = cercar_spotify(sp, artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
+                                cancons_discogs = cercar_discogs(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
+                                cancons_mb = cercar_musicbrainz(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
+                                cancons_deezer = cercar_deezer(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
+
+                                totes_cancons.extend(cancons_spotify + cancons_discogs + cancons_mb + cancons_deezer)
+
+                            cancons_uniques = eliminar_duplicats(totes_cancons)
+                            cancons_limitades = limitar_cancons_per_artista(cancons_uniques, max_per_artista)
+                            cancons_ordenades = ordenar_cancons_intelligent(cancons_limitades, ordenacio)
                             
-                            for c in lot_actual:
+                            status.update(label=f"⚙️ 3/4: Analitzant BPMs i filtrant (Motor Híbrid Anti-Ban)...", state="running")
+                            
+                            # === BARRA DE PERCENTATGE I LOTS ===
+                            barra_progres = st.progress(0)
+                            text_progres = st.empty()
+                            
+                            cancons_100x100_pures = []
+                            mida_lot = 10 
+                            
+                            for i in range(0, len(cancons_ordenades), mida_lot):
                                 if len(cancons_100x100_pures) >= quantitat:
                                     break
                                     
-                                text_progres.write(f"🔍 Extraient BPM: **{c['artista']} - {c['titol']}** (Pures trobades: {len(cancons_100x100_pures)}/{quantitat})")
+                                lot_actual = cancons_ordenades[i:i + mida_lot]
                                 
-                                # Si no té BPM, disparem el motor Híbrid
-                                if c["bpm"] == "N/D":
-                                    c["bpm"] = obtenir_bpm_hibrid(c["artista"], c["titol"])
-                                    
-                                # FILTRE ESTRICTE: Mirem si quadra. Si no, a les escombraries.
-                                if c["bpm"] != "N/D":
-                                    try:
-                                        if bpm_min <= float(c["bpm"]) <= bpm_max:
-                                            cancons_100x100_pures.append(c)
-                                    except ValueError:
-                                        pass
+                                for c in lot_actual:
+                                    if len(cancons_100x100_pures) >= quantitat:
+                                        break
                                         
-                                # Actualitzem barra visual
-                                prog = min(1.0, len(cancons_100x100_pures) / quantitat)
-                                barra_progres.progress(prog)
-                                time.sleep(0.1) # Petita pausa micro-segon entre cançó
-                            
-                            # === RESPIRACIÓ ANTI-BAN (Només si no hem acabat) ===
-                            if len(cancons_100x100_pures) < quantitat and (i + mida_lot) < len(cancons_ordenades):
-                                text_lot.write("⏱️ Pausa de seguretat de 2 segons per no saturar l'API...")
-                                time.sleep(2.0)
-                            
-                        text_progres.empty()
-                        text_lot.empty()
-                        barra_progres.empty()
-                        
-                        # Un cop tenim les cançons pures, verifiquem els URIs de Spotify perquè la playlist funcioni
-                        cancons_finals_verificades = verificar_uris(sp, cancons_100x100_pures)
-                        
-                        # GENERACIÓ FINAL I GUARDAT
-                        processades = []
-                        uris = []
-                        text = ""
-                        for idx, c in enumerate(cancons_finals_verificades, 1):
-                            processades.append({
-                                "NUM": idx, "ARTISTA": c["artista"], "TITOL": c["titol"],
-                                "BPM": c["bpm"], "CLAU": c["clau"], "ANY": c["any"],
-                                "POPULARITAT": c.get("popularitat", "N/D"),
-                                "ESTIL": estil_triat, "FONT": c["font"],
-                                "SPOTIFY": c.get("spotify_link") or "No trobat"
-                            })
-                            
-                            if c.get("spotify_uri"):
-                                uris.append(c["spotify_uri"])
+                                    percentatge_actual = int((len(cancons_100x100_pures) / quantitat) * 100)
+                                    text_progres.markdown(f"**Progrés:** {percentatge_actual}% - 🔍 Analitzant: *{c['artista']} - {c['titol']}*")
+                                    
+                                    # Extracció Híbrida
+                                    if c["bpm"] == "N/D":
+                                        c["bpm"] = obtenir_bpm_hibrid(c["artista"], c["titol"])
+                                        
+                                    if c["bpm"] != "N/D":
+                                        try:
+                                            if bpm_min <= float(c["bpm"]) <= bpm_max:
+                                                cancons_100x100_pures.append(c)
+                                        except ValueError:
+                                            pass
+                                            
+                                    prog = min(1.0, len(cancons_100x100_pures) / quantitat)
+                                    barra_progres.progress(prog)
+                                    time.sleep(0.1)
                                 
-                            text += f"{idx}. {c['artista']} - {c['titol']} ({c['any']}) [BPM:{c['bpm']}]\n"
+                                if len(cancons_100x100_pures) < quantitat and (i + mida_lot) < len(cancons_ordenades):
+                                    text_progres.markdown(f"**Progrés:** {percentatge_actual}% - ⏱️ *Pausa de seguretat (Anti-Ban) de 2 segons...*")
+                                    time.sleep(2.0)
+                                
+                            text_progres.empty()
+                            barra_progres.empty()
+                            
+                            status.update(label="✅ 4/4: Rastreig completat amb èxit!", state="complete")
+                            
+                            cancons_finals_verificades = verificar_uris(sp, cancons_100x100_pures)
+                            
+                            processades = []
+                            uris = []
+                            text = ""
+                            for idx, c in enumerate(cancons_finals_verificades, 1):
+                                processades.append({
+                                    "NUM": idx, "ARTISTA": c["artista"], "TITOL": c["titol"],
+                                    "BPM": c["bpm"], "CLAU": c["clau"], "ANY": c["any"],
+                                    "POPULARITAT": c.get("popularitat", "N/D"),
+                                    "ESTIL": estil_triat, "FONT": c["font"],
+                                    "SPOTIFY": c.get("spotify_link") or "No trobat"
+                                })
+                                
+                                if c.get("spotify_uri"):
+                                    uris.append(c["spotify_uri"])
+                                    
+                                text += f"{idx}. {c['artista']} - {c['titol']} ({c['any']}) [BPM:{c['bpm']}]\n"
 
-                            guardar_canco_confirmada(
-                                c["titol"], c["artista"], estil_triat, c["any"],
-                                c.get("bpm") if isinstance(c.get("bpm"), (int, float)) else None,
-                                c.get("clau"),
-                                c.get("popularitat") if isinstance(c.get("popularitat"), int) else None,
-                                c["font"], c.get("spotify_uri")
-                            )
+                                guardar_canco_confirmada(
+                                    c["titol"], c["artista"], estil_triat, c["any"],
+                                    c.get("bpm") if isinstance(c.get("bpm"), (int, float)) else None,
+                                    c.get("clau"),
+                                    c.get("popularitat") if isinstance(c.get("popularitat"), int) else None,
+                                    c["font"], c.get("spotify_uri")
+                                )
 
-                        # ACTUALITZACIÓ DEL SESSION STATE
-                        st.session_state.cancons_reals = processades
-                        st.session_state.uris_spotify = uris
-                        st.session_state.text_copiar = text
-                        st.session_state.titol_playlist = f"{estil_triat} ({any_triat})"
-                        actualitzar_estadistiques_genere(estil_triat)
+                            st.session_state.cancons_reals = processades
+                            st.session_state.uris_spotify = uris
+                            st.session_state.text_copiar = text
+                            st.session_state.titol_playlist = f"{estil_triat} ({any_triat})"
+                            actualitzar_estadistiques_genere(estil_triat)
             with col_dreta:
                 if st.session_state.artistes_ultima_cerca:
                     st.markdown("""
