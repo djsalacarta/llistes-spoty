@@ -1048,6 +1048,10 @@ if CLIENT_ID and CLIENT_SECRET:
         # PESTANYA 1: APRENDRE
         # ========================================================
         with tab_aprendre:
+            def actualitzar_estil_aprendre():
+                if st.session_state.sel_genere_guardat != "-- Nou --":
+                    st.session_state.input_genere_aprendre = st.session_state.sel_genere_guardat
+
             st.header("🎓 Ensenyar Artistes al Programa")
             st.write("Introdueix una llista d'artistes d'un estil concret. El programa els guardarà a la base de dades.")
 
@@ -1055,7 +1059,7 @@ if CLIENT_ID and CLIENT_SECRET:
 
             with col_a1:
                 tots_generes = obtenir_tots_generes_db()
-                genere_actual = st.session_state.genere_aprendre_seleccionat
+                genere_actual = st.session_state.get("input_genere_aprendre", "Makina")
                 info_actual = obtenir_genere_inteligent(genere_actual)
                 color_act = info_actual[3] if info_actual else "#00ff88"
                 icona_act = info_actual[4] if info_actual else "🎵"
@@ -1063,14 +1067,13 @@ if CLIENT_ID and CLIENT_SECRET:
                 col_gen1, col_gen2, col_gen3 = st.columns([2, 1, 1])
                 
                 with col_gen1:
-                    genere_aprendre = st.text_input("Genere / Estil:", value=st.session_state.genere_aprendre_seleccionat, key="input_genere_aprendre")
+                    genere_aprendre = st.text_input("Genere / Estil:", key="input_genere_aprendre")
                 
                 with col_gen2:
                     if tots_generes:
-                        genere_seleccionat = st.selectbox("Guardats:", ["-- Nou --"] + tots_generes, key="sel_genere_guardat")
+                        genere_seleccionat = st.selectbox("Guardats:", ["-- Nou --"] + tots_generes, key="sel_genere_guardat", on_change=actualitzar_estil_aprendre)
                         if genere_seleccionat != "-- Nou --":
                             genere_aprendre = genere_seleccionat
-                            st.session_state.genere_aprendre_seleccionat = genere_seleccionat
 
                 with col_gen3:
                     st.markdown(f"""
@@ -1110,7 +1113,6 @@ if CLIENT_ID and CLIENT_SECRET:
                                 seeds_text = ", ".join(artistes_parsed[:15]) if artistes_parsed else info_genere["seeds"]
                                 guardar_genere_inteligent(genere_aprendre, estils=info_genere["estils"], seeds=seeds_text, color=info_genere["color"], icona=info_genere["icona"])
                                 st.success(f"✅ {count} artistes guardats a la base de dades!")
-                                st.session_state.genere_aprendre_seleccionat = genere_aprendre
                                 st.session_state.artistes_aprendre_text = artistes_text
                                 st.balloons()
                             else:
@@ -1150,6 +1152,10 @@ if CLIENT_ID and CLIENT_SECRET:
         # PESTANYA 2: CERCAR CANÇONS
         # ========================================================
         with tab_cercar:
+            def actualitzar_estil_cerca():
+                if st.session_state.sel_genere_cercar != "-- Manual --":
+                    st.session_state.input_estil = st.session_state.sel_genere_cercar
+
             col_esquerra, col_dreta = st.columns([1, 2])
 
             with col_esquerra:
@@ -1163,32 +1169,40 @@ if CLIENT_ID and CLIENT_SECRET:
                 if generes_guardats_cercar:
                     col_estil1, col_estil2 = st.columns([2, 1])
                     with col_estil1:
-                        estil_triat = st.text_input("Estil / Genere:", value=st.session_state.input_estil, key="input_estil")
+                        estil_triat = st.text_input("Estil / Genere:", key="input_estil")
                     with col_estil2:
-                        genere_cercar_sel = st.selectbox("Guardats:", ["-- Manual --"] + generes_guardats_cercar, key="sel_genere_cercar")
+                        genere_cercar_sel = st.selectbox("Guardats:", ["-- Manual --"] + generes_guardats_cercar, key="sel_genere_cercar", on_change=actualitzar_estil_cerca)
                         if genere_cercar_sel != "-- Manual --":
-                            st.session_state.input_estil = genere_cercar_sel
                             estil_triat = genere_cercar_sel
                 else:
-                    estil_triat = st.text_input("Estil / Genere:", value=st.session_state.input_estil, key="input_estil")
+                    estil_triat = st.text_input("Estil / Genere:", key="input_estil")
 
                 col_mes, col_any = st.columns(2)
                 with col_mes:
                     mes_triat = st.selectbox("Mes:", MESES_NOMS, index=0, key="sel_mes")
                 with col_any:
                     any_triat = st.selectbox("Any:", ANYS_DISPONIBLES, index=len(ANYS_DISPONIBLES)-2, key="sel_any")
-                    
-                # NOUS FILTRES ESTRICTES
+                    any_manual = st.text_input("O rang (Ex: 2025/2026):", "", key="input_any_manual")
+                    if any_manual.strip():
+                        any_triat = any_manual.strip()
+
+                tipus_detectat = detectar_tipus_cerca(any_triat, mes_triat)
+                if tipus_detectat == "novetats":
+                    st.info("🔴 Mode NOVETATS actiu")
+                else:
+                    st.info("🟢 Mode CLASSICS actiu")
+
                 st.markdown("**Filtres Físics (Anti-Morralla):**")
                 col_bpm1, col_bpm2, col_q = st.columns(3)
                 with col_bpm1:
-                    bpm_min = st.number_input("BPM Mínim:", min_value=60, max_value=250, value=140, step=1)
+                    bpm_min = st.number_input("BPM Mínim:", min_value=60, max_value=250, value=140, step=1, key="input_bpm_min")
                 with col_bpm2:
-                    bpm_max = st.number_input("BPM Màxim:", min_value=60, max_value=250, value=170, step=1)
+                    bpm_max = st.number_input("BPM Màxim:", min_value=60, max_value=250, value=170, step=1, key="input_bpm_max")
                 with col_q:
-                    quantitat = st.number_input("Cançons objectiu:", min_value=10, max_value=300, value=100, step=10)
+                    quantitat = st.number_input("Cançons objectiu:", min_value=10, max_value=300, value=100, step=10, key="input_quantitat")
                 
-                max_per_artista = st.number_input("Max cançons per artista (puja'l si no arribes a l'objectiu):", min_value=1, max_value=15, value=5, step=1)
+                max_per_artista = st.number_input("Max cançons per artista (puja'l si no arribes a l'objectiu):", min_value=1, max_value=15, value=5, step=1, key="input_max_artista")
+                
                 ordenacio = st.selectbox("Ordenar per:", ["popularitat", "bpm", "any", "aleatori"], index=0, key="sel_ordenacio")
                 min_conf = st.selectbox("Min confiança DB:", ["segur", "probable", "dubtos"], index=1, key="sel_conf")
 
@@ -1229,7 +1243,6 @@ if CLIENT_ID and CLIENT_SECRET:
                             if not validar_artista_seguretat(artista_nom):
                                 continue
 
-                            # Cerquem a totes les fonts amb un limit més alt (15) per compensar els futurs descarts
                             cancons_spotify = cercar_spotify(sp, artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
                             cancons_discogs = cercar_discogs(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
                             cancons_mb = cercar_musicbrainz(artista_nom, any_min_r, any_max_r, mes_min_r, mes_max_r, limit=15, tipus_cerca=tipus_cerca)
@@ -1237,14 +1250,11 @@ if CLIENT_ID and CLIENT_SECRET:
 
                             totes_cancons.extend(cancons_spotify + cancons_discogs + cancons_mb + cancons_deezer)
 
-                        # ELIMINACIÓ DE DUPLICATS
                         cancons_uniques = eliminar_duplicats(totes_cancons)
                         
-                        # PRIMER FILTRE STRICTE DE BPM
                         cancons_filtrades_bpm = []
                         for c in cancons_uniques:
                             try:
-                                # Si no té BPM, el deixem passar temporalment (fonts com Discogs o MB poden no tenir-lo d'inici)
                                 if c["bpm"] == "N/D":
                                     cancons_filtrades_bpm.append(c)
                                 elif bpm_min <= float(c["bpm"]) <= bpm_max:
@@ -1255,23 +1265,19 @@ if CLIENT_ID and CLIENT_SECRET:
                         cancons_limitades = limitar_cancons_per_artista(cancons_filtrades_bpm, max_per_artista)
                         cancons_ordenades = ordenar_cancons_intelligent(cancons_limitades, ordenacio)
                         
-                        # Ens quedem amb la quantitat objectiu (ex: 100) abans de verificar URIs per no saturar l'API
                         cancons_finals = cancons_ordenades[:quantitat]
 
-                        # Obtenim els URIs i audios features finals de Spotify si falten
                         cancons_verificades = verificar_uris(sp, cancons_finals)
                         
-                        # SEGON FILTRE STRICTE DE BPM (Passada de seguretat final un cop verificades les URIs)
                         cancons_100x100_pures = []
                         for c in cancons_verificades:
                             try:
                                 if c["bpm"] != "N/D" and not (bpm_min <= float(c["bpm"]) <= bpm_max):
-                                    continue # Es descarta definitivament si el BPM no quadra
+                                    continue
                                 cancons_100x100_pures.append(c)
                             except ValueError:
                                 cancons_100x100_pures.append(c)
                         
-                        # GENERACIÓ FINAL I GUARDAT
                         processades = []
                         uris = []
                         text = ""
@@ -1283,10 +1289,8 @@ if CLIENT_ID and CLIENT_SECRET:
                                 "ESTIL": estil_triat, "FONT": c["font"],
                                 "SPOTIFY": c.get("spotify_link") or "No trobat"
                             })
-                            
                             if c.get("spotify_uri"):
                                 uris.append(c["spotify_uri"])
-                                
                             text += f"{idx}. {c['artista']} - {c['titol']} ({c['any']}) [BPM:{c['bpm']}]\n"
 
                             guardar_canco_confirmada(
@@ -1297,7 +1301,6 @@ if CLIENT_ID and CLIENT_SECRET:
                                 c["font"], c.get("spotify_uri")
                             )
 
-                        # ACTUALITZACIÓ DEL SESSION STATE PER MOSTRAR A LA INTERFÍCIE
                         st.session_state.cancons_reals = processades
                         st.session_state.uris_spotify = uris
                         st.session_state.text_copiar = text
