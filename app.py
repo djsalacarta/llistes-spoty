@@ -25,17 +25,24 @@ st.set_page_config(page_title="Rastrejador de Novetats Reals v2.0.0", page_icon=
 # ============================================================
 # 2. BASE DE DADES FIREBASE
 # ============================================================
-# Només inicialitzem Firebase si no s'ha fet abans
 if not firebase_admin._apps:
     try:
-        # AQUESTA ÉS LA RUTA AL TEU FITXER DE CREDENCIALS DE FIREBASE.
-        # ASSEGURA'T DE CANVIAR-LA SI EL TENS EN UNA ALTRA UBICACIÓ.
-        cred = credentials.Certificate(r"D:\Programa llistes Spoty\firebase_credentials.json")
-        firebase_admin.initialize_app(cred)
+        # 1. Intentem carregar des dels secrets de Streamlit (Ideal per al núvol)
+        if "firebase" in st.secrets:
+            firebase_creds = dict(st.secrets["firebase"])
+            cred = credentials.Certificate(firebase_creds)
+            firebase_admin.initialize_app(cred)
+        else:
+            # 2. Si no hi ha secrets, busquem el fitxer local
+            ruta_cred = r"D:\Programa llistes Spoty\firebase_credentials.json"
+            if os.path.exists(ruta_cred):
+                cred = credentials.Certificate(ruta_cred)
+                firebase_admin.initialize_app(cred)
+            else:
+                st.warning("⚠️ No s'han trobat credencials de Firebase ni localment ni a Secrets.")
     except Exception as e:
-        st.error(f"Error inicialitzant Firebase: {e}")
+        st.error(f"Error d'inici de Firebase: {e}")
 
-# Obtenim el client de Firestore
 db = firestore.client() if firebase_admin._apps else None
 
 
