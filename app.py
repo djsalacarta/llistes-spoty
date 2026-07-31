@@ -574,52 +574,66 @@ def detectar_tipus_cerca(any_triat, mes_triat="Indiferent"):
         return "classics"
 
 # ============================================================
-# 7. IA: TROBAR ARTISTES
+# 7. SUPER MOTOR: DB + SPOTIFY GRAPH + IA
 # ============================================================
-def trobar_artistes_passada1(estil, any_triat, referencia=""):
-    if not GROQ_KEY or not GROQ_URL:
-        artistes_db = consultar_artistes_db(estil, min_confiança="probable")
-        if artistes_db:
-            return [(nom, sub) for nom, sub, conf in artistes_db]
-        return []
-
-    tipus_cerca = detectar_tipus_cerca(any_triat)
+def trobar_artistes_passada1(sp, estil, any_triat, referencia=""):
+    artistes_finals = set()
+    
+    # 1. RECUPEREM LA TEVA BASE DE DADES (Memòria pròpia)
     artistes_db = consultar_artistes_db(estil, min_confiança="probable")
+    db_noms = [nom for nom, sub, conf in artistes_db]
+    for nom in db_noms:
+        artistes_finals.add((nom, estil))
+        
     rebutjats_db = consultar_rebutjats_db(estil)
 
+    # 2. MOTOR DE SEMBLANTS DE SPOTIFY (El Radar Real)
+    artistes_relacionats = []
+    if sp and referencia.strip():
+        try:
+            # Busquem la referència exacta a Spotify
+            resultat = sp.search(q=referencia, limit=1, type="artist,track")
+            artist_id = None
+            
+            if resultat.get("artists", {}).get("items"):
+                artist_id = resultat["artists"]["items"][0]["id"]
+            elif resultat.get("tracks", {}).get("items"):
+                artist_id = resultat["tracks"]["items"][0]["artists"][0]["id"]
+                
+            if artist_id:
+                # Extraiem l'arbre d'artistes relacionats directament de l'algoritme de Spotify
+                relacionats = sp.artist_related_artists(artist_id)
+                for ra in relacionats.get("artists", []):
+                    nom_ra = ra["name"]
+                    if nom_ra.lower() not in [r.lower() for r in rebutjats_db]:
+                        artistes_relacionats.append(nom_ra)
+                        artistes_finals.add((nom_ra, estil))
+        except Exception:
+            pass
+
+    # Si no hi ha IA, retornem el que hem pescat de DB i Spotify (No ens quedem a zero mai)
+    if not GROQ_KEY or not GROQ_URL:
+        return list(artistes_finals)
+
+    # 3. LA IA DEDUEIX I NETEJA
     headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
     context_db = ""
-    if artistes_db:
-        context_db = "ARTISTES JA CONEGUTS A LA BASE DE DADES:\n"
-        for nom, sub, conf in artistes_db[:15]:
-            context_db += f"- {nom} ({sub}) [{conf}]\n"
-    if rebutjats_db:
-        context_db += "\nARTISTES REBUTJATS (NO els incloguis):\n"
-        for nom in list(rebutjats_db)[:10]:
-            context_db += f"- {nom}\n"
+    if db_noms:
+        context_db += "ARTISTES JA VALIDATS A LA DB:\n" + ", ".join(db_noms[:20]) + "\n\n"
+    if artistes_relacionats:
+        context_db += "ARTISTES SIMILARS TROBATS PER SPOTIFY:\n" + ", ".join(artistes_relacionats) + "\n\n"
 
-    if tipus_cerca == "novetats":
-        instruccions_any = f"L'usuari busca NOVETATS de l'any {any_triat}. Troba artistes actius que publiquin musica nova."
-    else:
-        instruccions_any = f"L'usuari busca CLASSICS/TOP de l'any {any_triat}. Troba artistes classics i emblematics."
+    prompt = f"""Ets un motor d'intel·ligència musical. L'usuari busca música de l'estil: "{estil}".
 
-    context_ref = ""
-    if referencia.strip():
-        context_ref = f"\nATENCIÓ! L'usuari ha indicat una REFERÈNCIA CLAU: '{referencia}'. És OBLIGATORI trobar productors/artistes que facin EXACTAMENT aquest mateix so musical.\n"
-
-    prompt = f"""Ets un expert musical purista. L'usuari busca musica EXACTA de l'estil: "{estil}"
-{context_ref}
+DADES REALS D'ENTRADA:
 {context_db}
 
-{instruccions_any}
-
-REGLAS ESTRICTES:
-1. Respon NOMES amb noms d'ARTISTES REALS, un per linia.
-2. FORMAT OBLIGATORI per cada linia: NOM_ARTISTE | GENERE_PRINCIPAL
-3. NO escriguis frases explicatives ni numeros de llista.
-4. DESCARTA AUTOMATICAMENT qualsevol artista que no toqui aquest subgenere exacte.
-5. Maxim 80 artistes.
-6. PROHIBIT INCLOURE artistes de Pop, Reggaeton, Trap o comercial si l'usuari busca electrònica."""
+TASCA VITAL:
+1. Analitza aquests noms de dalt per deduir EXACTAMENT el so i subgènere que busquem (Techno, Salsa, Makina, etc.).
+2. Retorna aquests mateixos noms (si encaixen amb l'estil) i AFEGEIX-NE de nous que siguin germans bessons musicals.
+3. Respon NOMÉS amb noms d'ARTISTES REALS, un per línia (Format: NOM_ARTISTE | GENERE_PRINCIPAL).
+4. NO inventis noms per omplir. Si no en coneixes més, retorna els de l'entrada.
+5. Descarta els que no toquin aquest gènere."""
 
     data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 2000}
 
@@ -627,102 +641,22 @@ REGLAS ESTRICTES:
         res = requests.post(GROQ_URL, headers=headers, json=data, timeout=20)
         if res.status_code == 200:
             resposta = res.json()["choices"][0]["message"]["content"].strip()
-
-            if "SENSE_RESULTATS" in resposta or len(resposta) < 10:
-                if artistes_db:
-                    return [(nom, sub) for nom, sub, conf in artistes_db]
-                seeds = obtenir_seeds_genere(estil)
-                if seeds:
-                    return [(s, "seed") for s in seeds]
-                return []
-
-            artistes = []
+            
             for linia in resposta.splitlines():
                 linia = linia.strip()
-                if not linia or len(linia) > 60:
-                    continue
-                if linia.startswith(("-", "*", ">")):
-                    continue
-
+                if not linia or len(linia) > 60 or linia.startswith(("-", "*", ">")): continue
                 if "|" in linia:
                     parts = linia.split("|")
                     if len(parts) >= 2:
                         nom = parts[0].strip()
                         genere = parts[1].strip()
-                        if nom and 2 < len(nom) < 50 and nom not in rebutjats_db:
-                            artistes.append((nom, genere))
-
-            if artistes:
-                noms_nous = {a[0].lower() for a in artistes}
-                for nom, sub, conf in artistes_db:
-                    if nom.lower() not in noms_nous:
-                        artistes.insert(0, (nom, sub))
-                return artistes
-        return []
-    except Exception as e:
-        if artistes_db:
-            return [(nom, sub) for nom, sub, conf in artistes_db]
-        seeds = obtenir_seeds_genere(estil)
-        if seeds:
-            return [(s, "seed") for s in seeds]
-        return []
-
-def validar_artistes_passada2(artistes, estil, any_triat):
-    if not artistes or not GROQ_KEY or not GROQ_URL:
-        return [(nom, gen, "probable") for nom, gen in artistes]
-
-    headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
-    llista_text = "\n".join([f"{i+1}. {nom} ({genere})" for i, (nom, genere) in enumerate(artistes)])
-    tipus_cerca = detectar_tipus_cerca(any_triat)
-    context_any = "novetats recents" if tipus_cerca == "novetats" else f"classics del periode {any_triat}"
-
-    prompt = f"""Ets un expert musical. Revisa aquesta llista d'artistes per l'estil "{estil}" ({context_any}).
-
-LLISTA:
-{llista_text}
-
-REGLAS ESTRICTES:
-1. Descarta qualsevol que NO toqui realment l'estil "{estil}".
-2. FORMAT OBLIGATORI per cada linia: NOM_ARTISTE | GENERE | CONFIANCA
-3. CONFIANCA pot ser: segur o probable
-4. NO escriguis frases explicatives, introduccions ni conclusions.
-5. NO escriguis numeros de llista.
-6. ELIMINA automàticament qualsevol artista de Pop, Reggaeton o música comercial si l'estil buscat és electrònica o underground."""
-
-    data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 1500}
-
-    try:
-        res = requests.post(GROQ_URL, headers=headers, json=data, timeout=20)
-        if res.status_code == 200:
-            resposta = res.json()["choices"][0]["message"]["content"].strip()
-
-            if "CAP_VALID" in resposta or len(resposta) < 10:
-                return [(nom, gen, "probable") for nom, gen in artistes]
-
-            artistes_validats = []
-            for linia in resposta.splitlines():
-                linia = linia.strip()
-                if not linia or len(linia) > 60:
-                    continue
-                if "|" in linia:
-                    parts = linia.split("|")
-                    if len(parts) >= 3:
-                        nom = parts[0].strip()
-                        genere = parts[1].strip()
-                        conf = parts[2].strip().lower()
-                        if nom and 2 < len(nom) < 50:
-                            artistes_validats.append((nom, genere, conf))
-                    elif len(parts) == 2:
-                        nom = parts[0].strip()
-                        genere = parts[1].strip()
-                        if nom and 2 < len(nom) < 50:
-                            artistes_validats.append((nom, genere, "probable"))
-
-            if artistes_validats:
-                return artistes_validats
-        return [(nom, gen, "probable") for nom, gen in artistes]
+                        if nom and 2 < len(nom) < 50 and nom.lower() not in [r.lower() for r in rebutjats_db]:
+                            artistes_finals.add((nom, genere))
+                            
+            return list(artistes_finals)
+        return list(artistes_finals)
     except Exception:
-        return [(nom, gen, "probable") for nom, gen in artistes]
+        return list(artistes_finals)
 
 # ============================================================
 # 8. VALIDACIO DE SEGURETAT
@@ -1272,8 +1206,7 @@ if CLIENT_ID and CLIENT_SECRET:
                     with st.status("🚀 Iniciant rastreig musical...", expanded=True) as status:
                         
                         status.update(label="🧠 1/4: Consultant IA per trobar artistes...", state="running")
-                        artistes_passada1 = trobar_artistes_passada1(estil_triat, any_cerca, referencia_triada)
-                        
+                        artistes_passada1 = trobar_artistes_passada1(sp, estil_triat, any_cerca, referencia_triada)
                         if not artistes_passada1:
                             status.update(label="❌ Error: La IA no ha trobat artistes.", state="error")
                             st.error("La IA no ha pogut identificar artistes.")
