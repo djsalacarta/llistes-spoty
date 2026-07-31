@@ -296,7 +296,9 @@ FORMAT OBLIGATORI (una línia per camp):
 ESTILS: subgenere1, subgenere2, subgenere3, subgenere4, subgenere5
 SEEDS: artista1, artista2, artista3, artista4, artista5, artista6, artista7, artista8, artista9, artista10
 COLOR: #RRGGBB
-ICONA: emoji"""
+ICONA: emoji
+
+REGLA ESTRICTA: Evita completament música comercial (Pop, Reggaeton, Trap) si el gènere sol·licitat pertany a la música electrònica o underground."""
 
             data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 500}
             res = requests.post(GROQ_URL, headers=headers, json=data, timeout=15)
@@ -616,7 +618,8 @@ REGLAS ESTRICTES:
 2. FORMAT OBLIGATORI per cada linia: NOM_ARTISTE | GENERE_PRINCIPAL
 3. NO escriguis frases explicatives ni numeros de llista.
 4. DESCARTA AUTOMATICAMENT qualsevol artista que no toqui aquest subgenere exacte.
-5. Maxim 80 artistes."""
+5. Maxim 80 artistes.
+6. PROHIBIT INCLOURE artistes de Pop, Reggaeton, Trap o comercial si l'usuari busca electrònica."""
 
     data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 2000}
 
@@ -683,7 +686,8 @@ REGLAS ESTRICTES:
 2. FORMAT OBLIGATORI per cada linia: NOM_ARTISTE | GENERE | CONFIANCA
 3. CONFIANCA pot ser: segur o probable
 4. NO escriguis frases explicatives, introduccions ni conclusions.
-5. NO escriguis numeros de llista."""
+5. NO escriguis numeros de llista.
+6. ELIMINA automàticament qualsevol artista de Pop, Reggaeton o música comercial si l'estil buscat és electrònica o underground."""
 
     data = {"model": MODEL_IA, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 1500}
 
@@ -729,6 +733,23 @@ def validar_artista_seguretat(artista_nom):
         if neg in a_lower:
             return False
     return True
+
+def validar_canco_seguretat(canco, artista_nom):
+    artista_canco = canco["artista"].lower()
+    a_lower = artista_nom.lower()
+    
+    # 1. Filtre llista negra
+    for neg in LLISTA_NEGRA:
+        if neg in artista_canco:
+            return False
+            
+    # 2. Coincidència estricta de nom (Spotify a vegades retorna pop comercial si no troba el DJ)
+    # Exigim que el nom del DJ que hem buscat formi part obligatòriament de l'autor de la cançó.
+    if a_lower in artista_canco or artista_canco in a_lower:
+        return True
+        
+    # 3. ELIMINACIÓ IMPLACABLE: Si el nom no coincideix, és brossa de l'algoritme de Spotify.
+    return False
 
 def validar_canco_seguretat(canco, artista_nom):
     artista_canco = canco["artista"].lower()
