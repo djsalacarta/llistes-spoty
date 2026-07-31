@@ -1177,6 +1177,9 @@ if CLIENT_ID and CLIENT_SECRET:
                 else:
                     estil_triat = st.text_input("Estil / Genere:", key="input_estil")
 
+                # === NOU CAMP: REFERÈNCIA ARTISTA / CANÇÓ ===
+                referencia_triada = st.text_input("🎯 Referència clau (Artista o Cançó):", key="input_referencia", placeholder="Ex: Charlotte de Witte, Pont Aeri...")
+
                 col_mes, col_any = st.columns(2)
                 with col_mes:
                     mes_triat = st.selectbox("Mes:", MESES_NOMS, index=0, key="sel_mes")
@@ -1229,7 +1232,9 @@ if CLIENT_ID and CLIENT_SECRET:
                     any_min_r, any_max_r, mes_min_r, mes_max_r = parsejar_any_mes(any_triat, mes_triat)
                     tipus_cerca = detectar_tipus_cerca(any_triat, mes_triat)
 
-                    artistes_passada1 = trobar_artistes_passada1(estil_triat, any_triat)
+                    # === PASSEM LA REFERÈNCIA A LA IA ===
+                    artistes_passada1 = trobar_artistes_passada1(estil_triat, any_triat, referencia_triada)
+                    
                     if not artistes_passada1:
                         st.error("La IA no ha pogut identificar artistes.")
                     else:
@@ -1252,6 +1257,7 @@ if CLIENT_ID and CLIENT_SECRET:
 
                         cancons_uniques = eliminar_duplicats(totes_cancons)
                         
+                        # === FILTRE ESTRICTE BPM PASSADA 1 ===
                         cancons_filtrades_bpm = []
                         for c in cancons_uniques:
                             try:
@@ -1269,6 +1275,7 @@ if CLIENT_ID and CLIENT_SECRET:
 
                         cancons_verificades = verificar_uris(sp, cancons_finals)
                         
+                        # === FILTRE ESTRICTE BPM PASSADA 2 (Un cop verificat Spotify) ===
                         cancons_100x100_pures = []
                         for c in cancons_verificades:
                             try:
@@ -1320,7 +1327,9 @@ if CLIENT_ID and CLIENT_SECRET:
                             continue
                         cols = st.columns([3, 1, 1])
                         with cols[0]:
-                            st.write(f"**{artista}** ({genere}) [{conf}]")
+                            # === NOU ENLLAÇ PER AUDITAR L'ARTISTA ===
+                            url_artista = f"https://open.spotify.com/search/{requests.utils.quote(artista)}/artists"
+                            st.markdown(f"**{artista}** ({genere}) [{conf}] &nbsp; <a href='{url_artista}' target='_blank' style='color:#1DB954; text-decoration:none; font-weight:bold;'>🎧 Auditar</a>", unsafe_allow_html=True)
                         with cols[1]:
                             if st.button(f"✅ Si", key=f"btn_si_{i}_{st.session_state.feedback_timestamp}"):
                                 guardar_artista_confirmat(artista, estil_triat, genere, "usuari", "segur")
@@ -1336,7 +1345,19 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 if st.session_state.cancons_reals:
                     df = pd.DataFrame(st.session_state.cancons_reals)
-                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    
+                    # === NOVA TAULA AMB ENLLAÇOS CLICABLES ===
+                    st.dataframe(
+                        df, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={
+                            "SPOTIFY": st.column_config.LinkColumn(
+                                "SPOTIFY",
+                                display_text="🎧 Obrir Cançó"
+                            )
+                        }
+                    )
 
                     nom_llista = st.text_input("Nom de la playlist:", value=st.session_state.titol_playlist, key="input_nom_playlist")
                     col1, col2 = st.columns(2)
