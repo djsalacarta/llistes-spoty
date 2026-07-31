@@ -327,7 +327,6 @@ ICONA: emoji"""
 
     return {"estils": nom_genere, "seeds": "", "color": "#00ff88", "icona": "🎵"}
 
-
 LLISTA_NEGRA = ["tuyo", "rimsky-korsakov", "mussorgsky", "modest mussorgsky", "nikolai rimsky-korsakov"]
 
 SEEDS_GENERE = {
@@ -429,7 +428,7 @@ def guardar_llista_artistes_confirmats(artistes, genere):
     return count
 
 # ============================================================
-# 3. SISTEMA DE LOGS
+# 3. SISTEMA DE LOGS (TEMPS REAL)
 # ============================================================
 def init_console():
     if 'console_logs' not in st.session_state:
@@ -479,23 +478,18 @@ def render_console():
 # ============================================================
 def carregar_credencials():
     creds = {"CLIENT_ID": "", "CLIENT_SECRET": "", "GROQ_KEY": "", "GROQ_URL": "", "DISCOGS_TOKEN": ""}
-    
-    # 1. Intentar llegir des de Streamlit Cloud (secrets.toml)
     try:
         if "spotify" in st.secrets:
             creds["CLIENT_ID"] = st.secrets["spotify"].get("client_id", "")
             creds["CLIENT_SECRET"] = st.secrets["spotify"].get("client_secret", "")
-        
         if "groq" in st.secrets:
             creds["GROQ_KEY"] = st.secrets["groq"].get("key", "")
             creds["GROQ_URL"] = st.secrets["groq"].get("url", "")
-            
         if "discogs" in st.secrets:
             creds["DISCOGS_TOKEN"] = st.secrets["discogs"].get("token", "")
     except Exception:
         pass
 
-    # 2. Fallback per si ho executes al teu PC local
     if not creds["CLIENT_ID"] and os.path.exists(RUTA_API_SPOTIFY):
         try:
             with open(RUTA_API_SPOTIFY, "r", encoding="utf-8") as f:
@@ -725,6 +719,7 @@ REGLAS ESTRICTES:
         return [(nom, gen, "probable") for nom, gen in artistes]
     except Exception:
         return [(nom, gen, "probable") for nom, gen in artistes]
+
 # ============================================================
 # 8. VALIDACIO DE SEGURETAT
 # ============================================================
@@ -758,7 +753,7 @@ def obtenir_audio_features(sp, track_ids):
 
 def obtenir_bpm_hibrid(artista, titol):
     """Motor híbrid per trobar el BPM esquivant el bloqueig de Spotify"""
-    # 1. Intent Deezer (Bona cobertura per electrònica i general)
+    # 1. Intent Deezer
     try:
         url_search = f"https://api.deezer.com/search?q=artist:\"{artista}\" track:\"{titol}\"&limit=1"
         res = requests.get(url_search, timeout=2)
@@ -775,7 +770,7 @@ def obtenir_bpm_hibrid(artista, titol):
     except Exception:
         pass
 
-    # 2. Intent iTunes API (Excel·lent per Salsa, Rock, Pop comercial)
+    # 2. Intent iTunes API
     try:
         url_itunes = f"https://itunes.apple.com/search?term={requests.utils.quote(artista + ' ' + titol)}&entity=song&limit=1"
         res = requests.get(url_itunes, timeout=2)
@@ -1193,7 +1188,6 @@ if CLIENT_ID and CLIENT_SECRET:
                 else:
                     estil_triat = st.text_input("Estil / Genere:", key="input_estil")
 
-                # === NOU CAMP: REFERÈNCIA ARTISTA / CANÇÓ ===
                 referencia_triada = st.text_input("🎯 Referència clau (Artista o Cançó):", key="input_referencia", placeholder="Ex: Charlotte de Witte, Pont Aeri...")
 
                 col_mes, col_any = st.columns(2)
@@ -1220,7 +1214,7 @@ if CLIENT_ID and CLIENT_SECRET:
                 with col_q:
                     quantitat = st.number_input("Cançons objectiu:", min_value=10, max_value=300, value=100, step=10, key="input_quantitat")
                 
-                max_per_artista = st.number_input("Max cançons per artista (puja'l si no arribes a l'objectiu):", min_value=1, max_value=15, value=5, step=1, key="input_max_artista")
+                max_per_artista = st.number_input("Max cançons per artista:", min_value=1, max_value=15, value=5, step=1, key="input_max_artista")
                 
                 ordenacio = st.selectbox("Ordenar per:", ["popularitat", "bpm", "any", "aleatori"], index=0, key="sel_ordenacio")
                 min_conf = st.selectbox("Min confiança DB:", ["segur", "probable", "dubtos"], index=1, key="sel_conf")
@@ -1239,7 +1233,11 @@ if CLIENT_ID and CLIENT_SECRET:
                             st.session_state.artistes_ultima_cerca = []
                         st.rerun()
 
-                render_console()
+                # === ESPAI DINÀMIC PER A LA CONSOLA (Matrix Style) ===
+                consola_placeholder = st.empty()
+                with consola_placeholder:
+                    render_console()
+                    
                 if st.button("Netejar Consola", key="btn_netejar"):
                     clear_console()
                     st.rerun()
@@ -1248,7 +1246,6 @@ if CLIENT_ID and CLIENT_SECRET:
                     any_min_r, any_max_r, mes_min_r, mes_max_r = parsejar_any_mes(any_triat, mes_triat)
                     tipus_cerca = detectar_tipus_cerca(any_triat, mes_triat)
 
-                    # === PANELL VISUAL D'ESTAT ===
                     with st.status("🚀 Iniciant rastreig musical...", expanded=True) as status:
                         
                         status.update(label="🧠 1/4: Consultant IA per trobar artistes...", state="running")
@@ -1259,11 +1256,11 @@ if CLIENT_ID and CLIENT_SECRET:
                             st.error("La IA no ha pogut identificar artistes.")
                         else:
                             artistes_validats = validar_artistes_passada2(artistes_passada1, estil_triat, any_triat)
-                            st.session_state.artistes_ultima_cerca = artistes_validats
+                            
                             st.session_state.artistes_processats_feedback = set()
                             st.session_state.feedback_timestamp = time.time()
 
-                            status.update(label=f"🌐 2/4: Rastrejant {len(artistes_validats)} artistes a les bases de dades (Spotify, Discogs, Deezer)...", state="running")
+                            status.update(label=f"🌐 2/4: Rastrejant {len(artistes_validats)} artistes a les bases de dades...", state="running")
                             totes_cancons = []
                             for artista_nom, artista_genere, confiança in artistes_validats:
                                 if not validar_artista_seguretat(artista_nom):
@@ -1282,7 +1279,6 @@ if CLIENT_ID and CLIENT_SECRET:
                             
                             status.update(label=f"⚙️ 3/4: Analitzant BPMs i filtrant (Motor Híbrid Anti-Ban)...", state="running")
                             
-                            # === BARRA DE PERCENTATGE I LOTS ===
                             barra_progres = st.progress(0)
                             text_progres = st.empty()
                             
@@ -1302,14 +1298,26 @@ if CLIENT_ID and CLIENT_SECRET:
                                     percentatge_actual = int((len(cancons_100x100_pures) / quantitat) * 100)
                                     text_progres.markdown(f"**Progrés:** {percentatge_actual}% - 🔍 Analitzant: *{c['artista']} - {c['titol']}*")
                                     
-                                    # Extracció Híbrida
+                                    # Extracció Híbrida i Log Dinàmic
                                     if c["bpm"] == "N/D":
                                         c["bpm"] = obtenir_bpm_hibrid(c["artista"], c["titol"])
+                                        
+                                        if c["bpm"] != "N/D":
+                                            log(f"⚡ BPM Trobat: {c['artista']} - {c['titol']} -> {c['bpm']}", "info")
+                                        
+                                        with consola_placeholder:
+                                            render_console()
                                         
                                     if c["bpm"] != "N/D":
                                         try:
                                             if bpm_min <= float(c["bpm"]) <= bpm_max:
                                                 cancons_100x100_pures.append(c)
+                                                log(f"✅ Afegida (Pur): {c['artista']} - {c['bpm']} BPM", "success")
+                                            else:
+                                                log(f"❌ Descartada (Fora de rang): {c['artista']} - {c['bpm']} BPM", "error")
+                                            
+                                            with consola_placeholder:
+                                                render_console()
                                         except ValueError:
                                             pass
                                             
@@ -1357,7 +1365,18 @@ if CLIENT_ID and CLIENT_SECRET:
                             st.session_state.uris_spotify = uris
                             st.session_state.text_copiar = text
                             st.session_state.titol_playlist = f"{estil_triat} ({any_triat})"
+                            
+                            # === NOU BUGFIX: NOMÉS ELS ARTISTES PURS AL FEEDBACK ===
+                            artistes_finals_reals = set(c["ARTISTA"] for c in processades)
+                            artistes_per_feedback = []
+                            for nom, gen, conf in artistes_validats:
+                                if nom in artistes_finals_reals:
+                                    artistes_per_feedback.append((nom, gen, conf))
+                            
+                            st.session_state.artistes_ultima_cerca = artistes_per_feedback
+                            
                             actualitzar_estadistiques_genere(estil_triat)
+
             with col_dreta:
                 if st.session_state.artistes_ultima_cerca:
                     st.markdown("""
@@ -1371,7 +1390,6 @@ if CLIENT_ID and CLIENT_SECRET:
                             continue
                         cols = st.columns([3, 1, 1])
                         with cols[0]:
-                            # === NOU ENLLAÇ PER AUDITAR L'ARTISTA ===
                             url_artista = f"https://open.spotify.com/search/{requests.utils.quote(artista)}/artists"
                             st.markdown(f"**{artista}** ({genere}) [{conf}] &nbsp; <a href='{url_artista}' target='_blank' style='color:#1DB954; text-decoration:none; font-weight:bold;'>🎧 Auditar</a>", unsafe_allow_html=True)
                         with cols[1]:
@@ -1390,7 +1408,6 @@ if CLIENT_ID and CLIENT_SECRET:
                 if st.session_state.cancons_reals:
                     df = pd.DataFrame(st.session_state.cancons_reals)
                     
-                    # === NOVA TAULA AMB ENLLAÇOS CLICABLES ===
                     st.dataframe(
                         df, 
                         use_container_width=True, 
