@@ -369,7 +369,7 @@ ICONA: emoji"""
                         icona = linia.replace("ICONA:", "").strip()
 
                 return {"estils": estils, "seeds": seeds, "color": color, "icona": icona}
-        except Exception as e:
+        except Exception:
             pass
 
     return {"estils": nom_genere, "seeds": "", "color": "#00ff88", "icona": "🎵"}
@@ -521,36 +521,48 @@ def render_console():
     """, unsafe_allow_html=True)
 
 # ============================================================
-# 4. CREDENCIALS
+# 4. CREDENCIALS MULTIPLATAFORMA (STREAMLIT CLOUD + LOCAL)
 # ============================================================
 def carregar_credencials():
     creds = {"CLIENT_ID": "", "CLIENT_SECRET": "", "GROQ_KEY": "", "GROQ_URL": "", "DISCOGS_TOKEN": ""}
+    
+    # 1. Intentem carregar de st.secrets (Streamlit Cloud)
     try:
-        creds["CLIENT_ID"] = st.secrets.get("SPOTIFY_CLIENT_ID", "")
-        creds["CLIENT_SECRET"] = st.secrets.get("SPOTIFY_CLIENT_SECRET", "")
-        creds["GROQ_KEY"] = st.secrets.get("GROQ_KEY", "")
-        creds["GROQ_URL"] = st.secrets.get("GROQ_URL", "")
-        creds["DISCOGS_TOKEN"] = st.secrets.get("DISCOGS_TOKEN", "")
+        creds["CLIENT_ID"] = st.secrets.get("SPOTIFY_CLIENT_ID", "") or st.secrets.get("spotify", {}).get("client_id", "")
+        creds["CLIENT_SECRET"] = st.secrets.get("SPOTIFY_CLIENT_SECRET", "") or st.secrets.get("spotify", {}).get("client_secret", "")
+        creds["GROQ_KEY"] = st.secrets.get("GROQ_KEY", "") or st.secrets.get("groq", {}).get("key", "")
+        creds["GROQ_URL"] = st.secrets.get("GROQ_URL", "") or st.secrets.get("groq", {}).get("url", "")
+        creds["DISCOGS_TOKEN"] = st.secrets.get("DISCOGS_TOKEN", "") or st.secrets.get("discogs", {}).get("token", "")
     except Exception:
         pass
-    if not creds["CLIENT_ID"] and os.path.exists(RUTA_API_SPOTIFY):
-        try:
-            with open(RUTA_API_SPOTIFY, "r", encoding="utf-8") as f:
-                claus = re.findall(r'[a-f0-9]{32}', f.read())
-            if len(claus) >= 2:
-                creds["CLIENT_ID"] = claus[0]
-                creds["CLIENT_SECRET"] = claus[1]
-        except Exception:
-            pass
-    if not creds["GROQ_KEY"] and os.path.exists(RUTA_CONFIG_JSON):
-        try:
-            with open(RUTA_CONFIG_JSON, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            creds["GROQ_KEY"] = config.get("GROQ_KEY", "")
-            creds["GROQ_URL"] = config.get("GROQ_URL", "")
-            creds["DISCOGS_TOKEN"] = config.get("DISCOGS_TOKEN", "")
-        except Exception:
-            pass
+        
+    # 2. Si falten, busquem fitxers locals
+    if not creds["CLIENT_ID"]:
+        for ruta in [RUTA_API_SPOTIFY, "api.txt"]:
+            if os.path.exists(ruta):
+                try:
+                    with open(ruta, "r", encoding="utf-8") as f:
+                        claus = re.findall(r'[a-f0-9]{32}', f.read())
+                    if len(claus) >= 2:
+                        creds["CLIENT_ID"] = claus[0]
+                        creds["CLIENT_SECRET"] = claus[1]
+                        break
+                except Exception:
+                    pass
+                    
+    if not creds["GROQ_KEY"]:
+        for ruta in [RUTA_CONFIG_JSON, "configuracio_api.json"]:
+            if os.path.exists(ruta):
+                try:
+                    with open(ruta, "r", encoding="utf-8") as f:
+                        config = json.load(f)
+                    creds["GROQ_KEY"] = config.get("GROQ_KEY", "")
+                    creds["GROQ_URL"] = config.get("GROQ_URL", "")
+                    creds["DISCOGS_TOKEN"] = config.get("DISCOGS_TOKEN", "")
+                    break
+                except Exception:
+                    pass
+                    
     return creds
 
 CREDS = carregar_credencials()
