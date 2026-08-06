@@ -733,20 +733,6 @@ def validar_canco_seguretat(canco, artista_nom):
         
     return False
 
-def validar_canco_seguretat(canco, artista_nom):
-    artista_canco = canco["artista"].lower()
-    a_lower = artista_nom.lower()
-    for neg in LLISTA_NEGRA:
-        if neg in artista_canco:
-            return False
-    if a_lower in artista_canco or artista_canco in a_lower:
-        return True
-    if len(artista_nom) <= 4:
-        if artista_canco == a_lower:
-            return True
-        return False
-    return True
-
 # ============================================================
 # 9. CERCA SPOTIFY / DISCOGS / DEEZER AMB FILTRES DE MES
 # ============================================================
@@ -1144,15 +1130,29 @@ if CLIENT_ID and CLIENT_SECRET:
 
                 with col_btn3:
                     if st.button("🗑️ Esborrar Genere", key="btn_esborrar_aprendre", use_container_width=True):
-                        conn = db_conn()
-                        cursor = conn.cursor()
-                        cursor.execute("DELETE FROM artistes_confirmats WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
-                        cursor.execute("DELETE FROM artistes_rebutjats WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
-                        cursor.execute("DELETE FROM cancons_confirmades WHERE LOWER(genere) = LOWER(?)", (genere_aprendre,))
-                        cursor.execute("DELETE FROM generes_apresos WHERE LOWER(nom_genere) = LOWER(?)", (genere_aprendre,))
-                        conn.commit()
-                        conn.close()
-                        st.warning(f"🗑️ Genere \"{genere_aprendre}\" esborrat.")
+                        if db:
+                            gen_lower = genere_aprendre.lower()
+                            
+                            # 1. Eliminar d'artistes_confirmats
+                            docs_conf = db.collection("artistes_confirmats").where("genere_lower", "==", gen_lower).get()
+                            for d in docs_conf: d.reference.delete()
+                            
+                            # 2. Eliminar d'artistes_rebutjats
+                            docs_reb = db.collection("artistes_rebutjats").where("genere_lower", "==", gen_lower).get()
+                            for d in docs_reb: d.reference.delete()
+                            
+                            # 3. Eliminar de cancons_confirmades (comprovant el camp genere de forma estricta o per lower)
+                            docs_canc = db.collection("cancons_confirmades").get()
+                            for d in docs_canc:
+                                if d.to_dict().get("genere", "").lower() == gen_lower:
+                                    d.reference.delete()
+                                    
+                            # 4. Eliminar de generes_apresos
+                            db.collection("generes_apresos").document(gen_lower).delete()
+                            
+                            st.warning(f"🗑️ Genere \"{genere_aprendre}\" esborrat completament de Firebase.")
+                        else:
+                            st.error("Error: Sense connexió a la base de dades Firebase.")
 
             with col_a2:
                 st.subheader("📊 Estadistiques")
