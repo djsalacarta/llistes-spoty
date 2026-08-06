@@ -526,7 +526,6 @@ def render_console():
 def carregar_credencials():
     creds = {"CLIENT_ID": "", "CLIENT_SECRET": "", "GROQ_KEY": "", "GROQ_URL": "", "DISCOGS_TOKEN": ""}
     
-    # 1. Intentem carregar de st.secrets (Streamlit Cloud)
     try:
         creds["CLIENT_ID"] = st.secrets.get("SPOTIFY_CLIENT_ID", "") or st.secrets.get("spotify", {}).get("client_id", "")
         creds["CLIENT_SECRET"] = st.secrets.get("SPOTIFY_CLIENT_SECRET", "") or st.secrets.get("spotify", {}).get("client_secret", "")
@@ -536,7 +535,6 @@ def carregar_credencials():
     except Exception:
         pass
         
-    # 2. Si falten, busquem fitxers locals
     if not creds["CLIENT_ID"]:
         for ruta in [RUTA_API_SPOTIFY, "api.txt"]:
             if os.path.exists(ruta):
@@ -628,7 +626,7 @@ def detectar_tipus_cerca(any_triat, mes_triat="Indiferent"):
 # ============================================================
 # 7. IA: TROBAR ARTISTES
 # ============================================================
-def trobar_artistes_passada1(estil, any_triat):
+def trobar_artistes_passada1(estil, any_triat, referencia=""):
     if not GROQ_KEY or not GROQ_URL:
         artistes_db = consultar_artistes_db(estil, min_confiança="probable")
         if artistes_db:
@@ -649,6 +647,9 @@ def trobar_artistes_passada1(estil, any_triat):
         context_db += "\nARTISTES QUE NO SON D'AQUEST ESTIL (rebutjats):\n"
         for nom in list(rebutjats_db)[:10]:
             context_db += f"- {nom}\n"
+
+    if referencia and referencia.strip():
+        context_db += f"\nREFERÈNCIA O LLAVOR D'INSPIRACIÓ PRINCIPAL: {referencia.strip()}\n"
 
     if tipus_cerca == "novetats":
         instruccions_any = f"L'usuari busca NOVETATS de l'any {any_triat}. Troba artistes actius que publiquin musica nova."
@@ -1295,6 +1296,16 @@ if CLIENT_ID and CLIENT_SECRET:
                 else:
                     estil_triat = st.text_input("Estil / Genere:", value=st.session_state.input_estil, key="input_estil")
 
+                # ====================================================
+                # RECORDANÇA I RECUPERACIÓ DELS CONTROLS DE REFERÈNCIA
+                # ====================================================
+                tipus_ref = st.radio("Tipus de referència:", ["Cançó", "Artista"], horizontal=True, key="radio_tipus_ref")
+                
+                if "Cançó" in tipus_ref:
+                    referencia_triada = st.text_input("Introdueix una CANÇÓ de referència:", placeholder="Ex: Pont Aeri - Flying Free", key="input_referencia")
+                else:
+                    referencia_triada = st.text_input("Introdueix un ARTISTA de referència:", placeholder="Ex: Pont Aeri", key="input_referencia")
+
                 col_mes, col_any = st.columns(2)
                 with col_mes:
                     mes_triat = st.selectbox("Mes:", MESES_NOMS, index=0, key="sel_mes")
@@ -1339,8 +1350,8 @@ if CLIENT_ID and CLIENT_SECRET:
                     st.rerun()
 
                 if btn_rastreig:
-                    log(f"Rastreig iniciat per: {estil_triat} ({any_triat})", "info")
-                    artistes_passada1 = trobar_artistes_passada1(estil_triat, any_triat)
+                    log(f"Rastreig iniciat per: {estil_triat} ({any_triat}) | Ref: {referencia_triada}", "info")
+                    artistes_passada1 = trobar_artistes_passada1(estil_triat, any_triat, referencia_triada)
 
                     if not artistes_passada1:
                         st.error("No s'han trobat artistes per a aquest estil.")
